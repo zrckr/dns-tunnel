@@ -6,8 +6,11 @@ import socket
 import timeit
 import argparse
 
+DEBUG = None
+BUFFER_SIZE = 1024
+
 class Client():
-    def __init__(self, host, port, timeout=30):
+    def __init__(self, host, port, timeout):
         self.sock = None
         self.addr = (host, port)
         self.timeout = timeout
@@ -27,17 +30,17 @@ class Client():
             while True:
                 st_time = timeit.default_timer()
                 
-                request = b'Hello, world!'
+                request = input("> ").encode()
                 if (request):
                     self.sock.send(request)
 
-                response = self.sock.recvfrom(1024)
+                response = self.sock.recvfrom(BUFFER_SIZE)
                 if response:
-                    print(">", bytes.decode(response[0]))
+                    print("$", response[0])
 
                 fn_time = timeit.default_timer() - st_time
-                print(fn_time/1000.0, "ms")
-
+                # print(f"{fn_time/1000.0:.5f} ms")
+        
         except KeyboardInterrupt:
             print("Interrupt: by the user...")
         except Exception as error:
@@ -75,6 +78,6 @@ if __name__ == "__main__":
        parser.error('Only or at least one sending mode must be specified!')
 
     dest = args.conn.split(':')
-    client = Client(dest[0], int(dest[1]))
+    client = Client(dest[0], int(dest[1]), 5)
     client.setup()
     client.run()
