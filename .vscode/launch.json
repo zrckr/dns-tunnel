@@ -5,13 +5,27 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Текущий файл",
+            "name": "Python: Server",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/server.py",
             "console": "integratedTerminal",
-            "args": ["--connect", "localhost:7777",
-                     "--send-text"],
+            "args": [
+                "--port", "7777",
+                "--max-conns", "1",
+            ],
+        },
+        {
+            "name": "Python: Client",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/client.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--connect",
+                "localhost:7777",
+                "--send-text"
+            ],
         }
     ]
 }
