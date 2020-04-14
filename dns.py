@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-import bitstring as bitstr
+import os
+from bitstring import BitArray
 
 def scramble(data, offset, reverse=False):
     a = bitstr.BitArray(data, endian="little")
@@ -23,3 +24,6 @@ def scramble(data, offset, reverse=False):
             b[i] = a[i] ^ x ^ y
 
     return b.tobytes()
+
+def random_bytes(length):
+    return bytearray(os.urandom(length))
