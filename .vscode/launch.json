@@ -5,14 +5,23 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Dns",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dns.py",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Python: Server",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/server.py",
             "console": "integratedTerminal",
             "args": [
-                "--port", "7777",
-                "--max-conns", "1",
+                "--port",
+                "7777",
+                "--max-conns",
+                "1",
             ],
         },
         {
