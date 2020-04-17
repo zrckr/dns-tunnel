@@ -1,57 +1,91 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+import dns
 import sys
 import socket
 import timeit
 import argparse
+import threading
 
 DEBUG = None
-BUFFER_SIZE = 1024
 
 class Server():
-    def __init__(self, host, port, timeout):
-        self.sock = None
+    def __init__(self, host, port, timeout=30):
         self.addr = (host, port)
+        self.hostname = socket.gethostname()
         self.timeout = timeout
-        self.cancelled = False
-        
-    def setup(self, max_connections):
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setblocking(False)
-            self.sock.settimeout(self.timeout)
-            self.sock.bind(self.addr)
-            #self.sock.listen(max_connections)
 
-            print(f"Listening on {socket.gethostname()}:{self.addr[1]}, timeout {self.timeout}...")
+        try:
+            self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_sock.setblocking(1)
+            self.tcp_sock.bind(self.addr)
+
+            self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_sock.setblocking(0)
+            self.udp_sock.bind(self.addr)
+
         except socket.error as error:
             print("Socket initialization failed:", str(error))
             return None
 
-    def run(self, mode=''):
-        try:
-            while True:
-                st_time = timeit.default_timer()
-
-                request, host = self.sock.recvfrom(BUFFER_SIZE)
+    def tcp_listen(self):          
+        self.tcp_sock.listen(1)
+        
+        while True:
+            connection, addr = self.tcp_sock.accept()
+            connection.settimeout(self.timeout)
+            connection.setblocking(True)
+            
+            st_time = timeit.default_timer()
+            
+            with connection:
+                request = connection.recv(dns.BUFFER_SIZE)
                 if not request:
+                    print(f"Client disconnected!")
                     break
-                print("Received data from", host, f"{len(request)} bytes", end=" ")
+                        
+                print(f"Received", f"{len(request)} bytes", end=" ")
 
-                response = bytes([len(bytes.decode(request))])
-                if response:
-                    self.sock.sendto(response, host)
+                response = str.encode("Got it!")
+                connection.send(response)
 
-                fn_time = timeit.default_timer() - st_time
-                print(f"{fn_time/1000.0:.5f} ms")
+            fn_time = timeit.default_timer() - st_time
+            print(f"{fn_time/1000.0:.5f} ms")
+        
+        # self.tcp_sock.close()
 
+    def udp_listen(self):
+        self.udp_sock.settimeout(self.timeout)
+
+        while True:
+            st_time = timeit.default_timer()
+            
+            request, addr = self.udp_sock.recvfrom(dns.BUFFER_SIZE)
+            if not request:
+                raise error(f"Client at {addr} disconnected!")
+                        
+            print("Received data from", addr, f"{len(request)} bytes", end=" ")
+
+            response = request.upper()
+            self.udp_sock.sendto(response, addr)
+
+            fn_time = timeit.default_timer() - st_time
+            print(f"{fn_time/1000.0:.5f} ms")
+        
+        self.udp_sock.close()
+
+    def run(self):
+        try:
+            threading.Thread(target=self.tcp_listen).start()
+            print(f"TCP thread running on {self.hostname}:{self.addr[1]}")
+            
+            threading.Thread(target=self.udp_listen).start()
+            print(f"UDP thread running on {self.hostname}:{self.addr[1]}")
         except KeyboardInterrupt:
             print("Interrupt: by the user...")
         except Exception as error:
             print("Error:", str(error))
-        finally:
-            self.sock.close()
 
 # --------------------------------------------------------------------------------------------------
 
@@ -71,6 +105,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    client = Server('', args.port, 5)
-    client.setup(args.conns)
+    client = Server('', args.port)
     client.run()
