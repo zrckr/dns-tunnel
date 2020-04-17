@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+import dns
 import sys
 import socket
 import timeit
@@ -10,7 +11,7 @@ DEBUG = None
 BUFFER_SIZE = 1024
 
 class Client():
-    def __init__(self, host, port, timeout):
+    def __init__(self, host, port, timeout=30):
         self.sock = None
         self.addr = (host, port)
         self.timeout = timeout
@@ -78,6 +79,6 @@ if __name__ == "__main__":
        parser.error('Only or at least one sending mode must be specified!')
 
     dest = args.conn.split(':')
-    client = Client(dest[0], int(dest[1]), 5)
+    client = Client(dest[0], int(dest[1]))
     client.setup()
     client.run()
