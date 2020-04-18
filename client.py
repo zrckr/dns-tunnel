@@ -15,39 +15,41 @@ class Client():
         self.sock = None
         self.addr = (host, port)
         self.timeout = timeout
-        
-    def setup(self):
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setblocking(False)
-            self.sock.settimeout(self.timeout)
-            self.sock.connect(self.addr)
-        except socket.error as error:
-            print("Socket initialization failed!")
-            return None
+    
+    def send(self, data, protocol):
+        with socket.socket(socket.AF_INET, protocol) as sock:
+            if protocol is socket.SOCK_STREAM:
+                sock.setblocking(True)
+            sock.settimeout(self.timeout)
 
-    def run(self, mode=''):
+            sock.connect(self.addr)
+            sock.send(data)
+
+            response = sock.recv(dns.BUFFER_SIZE)
+            if not response:
+                raise Exception('Sending a request successfully failed!')
+            return response
+
+    def run(self):
         try:
             while True:
-                st_time = timeit.default_timer()
+                size = int(input("Bytes: "))
                 
-                request = input("> ").encode()
-                if (request):
-                    self.sock.send(request)
-
-                response = self.sock.recvfrom(BUFFER_SIZE)
-                if response:
-                    print("$", response[0])
-
-                fn_time = timeit.default_timer() - st_time
-                # print(f"{fn_time/1000.0:.5f} ms")
-        
+                data = dns.random_bytes(size)
+                r = None
+                if (len(data) > dns.BIG_DNS):
+                    r = self.send(data, socket.SOCK_STREAM)
+                else:
+                    r = self.send(data, socket.SOCK_DGRAM)
+                
+                print("$", r)
+                
         except KeyboardInterrupt:
-            print("Interrupt: by the user...")
+            print("[Interrupt] Exit by the user...")
         except Exception as error:
-            print("Error:", str(error))
-        finally:
-            self.sock.close()
+            print("[Info]", str(error))
+        except socket.error as error:
+            print("[Socket]", str(error))
 
 # --------------------------------------------------------------------------------------------------
 
@@ -80,5 +82,4 @@ if __name__ == "__main__":
 
     dest = args.conn.split(':')
     client = Client(dest[0], int(dest[1]))
-    client.setup()
     client.run()
