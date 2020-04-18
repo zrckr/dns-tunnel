@@ -3,10 +3,10 @@
 
 import dns
 import sys
+import queue
+import select
 import socket
-import timeit
 import argparse
-import threading
 
 DEBUG = None
 
@@ -15,77 +15,69 @@ class Server():
         self.addr = (host, port)
         self.hostname = socket.gethostname()
         self.timeout = timeout
+        self.sockets = []
 
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tcp_sock.setblocking(1)
             self.tcp_sock.bind(self.addr)
+            self.tcp_sock.listen()
+        
+            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp_sock.bind(self.addr)
 
-            self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.udp_sock.setblocking(0)
-            self.udp_sock.bind(self.addr)
+            self.sockets += [self.tcp_sock, udp_sock]
 
         except socket.error as error:
-            print("Socket initialization failed:", str(error))
+            print("[Socket] Initialization failed:", str(error))
             return None
 
-    def tcp_listen(self):          
-        self.tcp_sock.listen(1)
-        
-        while True:
-            connection, addr = self.tcp_sock.accept()
-            connection.settimeout(self.timeout)
-            connection.setblocking(True)
-            
-            st_time = timeit.default_timer()
-            
-            with connection:
-                request = connection.recv(dns.BUFFER_SIZE)
-                if not request:
-                    print(f"Client disconnected!")
-                    break
-                        
-                print(f"Received", f"{len(request)} bytes", end=" ")
-
-                response = str.encode("Got it!")
-                connection.send(response)
-
-            fn_time = timeit.default_timer() - st_time
-            print(f"{fn_time/1000.0:.5f} ms")
-        
-        # self.tcp_sock.close()
-
-    def udp_listen(self):
-        self.udp_sock.settimeout(self.timeout)
-
-        while True:
-            st_time = timeit.default_timer()
-            
-            request, addr = self.udp_sock.recvfrom(dns.BUFFER_SIZE)
-            if not request:
-                raise error(f"Client at {addr} disconnected!")
-                        
-            print("Received data from", addr, f"{len(request)} bytes", end=" ")
-
-            response = request.upper()
-            self.udp_sock.sendto(response, addr)
-
-            fn_time = timeit.default_timer() - st_time
-            print(f"{fn_time/1000.0:.5f} ms")
-        
-        self.udp_sock.close()
-
     def run(self):
+        print("Server is running!")
         try:
-            threading.Thread(target=self.tcp_listen).start()
-            print(f"TCP thread running on {self.hostname}:{self.addr[1]}")
-            
-            threading.Thread(target=self.udp_listen).start()
-            print(f"UDP thread running on {self.hostname}:{self.addr[1]}")
+            while True:
+                readable, writable, exceptional = select.select(self.sockets, [], [])
+                for sock in readable:
+                    if sock.type == socket.SOCK_DGRAM:
+                        self.process_udp(sock)
+                    
+                    if sock.type == socket.SOCK_STREAM:
+                        if sock == self.tcp_sock:
+                            self.accept_tcp(sock)
+                        else:
+                            self.process_tcp(sock)
+
         except KeyboardInterrupt:
-            print("Interrupt: by the user...")
+            print("[Interrupt] Exit by the user...")
         except Exception as error:
-            print("Error:", str(error))
+            print("[Info]", str(error))
+
+        print("Server is shutting down!")
+        for sock in self.sockets:
+            sock.close()
+        return
+    
+    def process_udp(self, sock):
+        request, addr = sock.recvfrom(dns.BUFFER_SIZE)
+        if request:
+            response = str.encode("UDP response")
+            sock.sendto(response, addr)
+        else:
+            return
+
+    def accept_tcp(self, sock):
+        c, addr = sock.accept()
+        self.sockets += [c]
+
+    def process_tcp(self, sock):
+        try:
+            request = sock.recv(dns.BUFFER_SIZE)
+            if request:
+                response = str.encode("TCP response")
+                sock.send(response)
+        except:
+            sock.close()
+            self.sockets.remove(sock)
+            return
 
 # --------------------------------------------------------------------------------------------------
 
