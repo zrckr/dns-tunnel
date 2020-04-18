@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-import dns
+import dns      # dns.py
 import sys
+import dnslib
 import socket
 import timeit
+import binascii
 import argparse
 
 DEBUG = None
@@ -32,17 +34,19 @@ class Client():
 
     def run(self):
         try:
-            while True:
-                size = int(input("Bytes: "))
-                
-                data = dns.random_bytes(size)
-                r = None
+            while True:    
+                text = str.encode(input("> "))
+                data = dns.dns_to_q(text, 'google.com', 'A')
+
+                response = None
                 if (len(data) > dns.BIG_DNS):
-                    r = self.send(data, socket.SOCK_STREAM)
+                    response = self.send(data, socket.SOCK_STREAM)
                 else:
-                    r = self.send(data, socket.SOCK_DGRAM)
+                    response = self.send(data, socket.SOCK_DGRAM)
                 
-                print("$", r)
+                response = dns.dns_from_q(response)
+
+                print("$", response.decode())
                 
         except KeyboardInterrupt:
             print("[Interrupt] Exit by the user...")

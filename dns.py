@@ -4,6 +4,7 @@
 import os
 import base64
 import dnslib
+import random
 import struct
 import binascii
 from bitstring import BitArray
@@ -55,7 +56,7 @@ def encode_to_domain(data, domain, base_encoding, crypt=None):
 
     string = ""
     for frag in parts:
-        string += str(base_encoding(frag), 'ascii') + "."
+        string += str(base_encoding(frag), 'utf-8') + "."
     string += domain
 
     if len(string) > DNS_DOMAIN_LEN:
@@ -71,7 +72,7 @@ def decode_from_domain(domain, base_decoding, decrypt=None):
     # Look for the presence of encoded bytes...
     try:
         for i in parts:
-            msg_bytes = i.encode('ascii')
+            msg_bytes = i.encode('utf-8')
             data += base_decoding(msg_bytes)
     except Exception as error:
         # Throw and go
@@ -82,18 +83,44 @@ def decode_from_domain(domain, base_decoding, decrypt=None):
     
     return data
 
-def exf_file_rr(filename, domain, buffer_size=32):
-    requests = []
-    with open(filename, 'rb') as file:
-        data = file.read(buffer_size)
-        part = 0
-        
-        while (data):
-            payload = struct.pack(f'L{buffer_size}s', part, data)
-            domain_payload = encode_to_domain(data, domain, base64.b64encode)
-            requests += [dnslib.DNSRecord.question(domain_payload)]
-            
-            data = file.read(buffer_size)
-            part += 1
+def dns_to_q(data, domain, qtype):
+    data_msg = encode_to_domain(data, domain, base64.urlsafe_b64encode)
+    d_question = dnslib.DNSRecord.question(data_msg, qtype)
+
+    return d_question.pack()
+
+def dns_proc_q(raw_question):
+    d_question = dnslib.DNSRecord.parse(raw_question)
+    d_qname = str(d_question.q.get_qname())
+    d_data = decode_from_domain(d_qname, base64.urlsafe_b64decode)
+
+    d_answer = d_question.reply()
+    d_rr = dnslib.RR(d_qname, rtype=16, rdata=dnslib.TXT(d_data))
+    d_answer.add_answer(d_rr)
     
-    return requests
+    print(d_answer, end="\n\n")
+    return d_answer.pack()
+
+def dns_from_q(raw_answer):
+    d_answer = dnslib.DNSRecord.parse(raw_answer)
+
+    data = b''
+    for rr in d_answer.rr:
+        data += rr.rdata.data[0]
+    return data
+
+# def exf_file_rr(filename, domain, buffer_size=32):
+#     requests = []
+#     with open(filename, 'rb') as file:
+#         data = file.read(buffer_size)
+#         part = 0
+        
+#         while (data):
+#             payload = struct.pack(f'L{buffer_size}s', part, data)
+#             domain_payload = encode_to_domain(data, domain, base64.b64encode)
+#             requests += [dnslib.DNSRecord.question(domain_payload)]
+            
+#             data = file.read(buffer_size)
+#             part += 1
+    
+#     return requests

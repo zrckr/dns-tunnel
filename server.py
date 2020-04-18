@@ -55,11 +55,14 @@ class Server():
         for sock in self.sockets:
             sock.close()
         return
+
+    def main(self, data):
+        return dns.dns_proc_q(data)
     
     def process_udp(self, sock):
         request, addr = sock.recvfrom(dns.BUFFER_SIZE)
         if request:
-            response = str.encode("UDP response")
+            response = self.main(request)
             sock.sendto(response, addr)
         else:
             return
@@ -72,7 +75,7 @@ class Server():
         try:
             request = sock.recv(dns.BUFFER_SIZE)
             if request:
-                response = str.encode("TCP response")
+                response = self.main(request)
                 sock.send(response)
         except:
             sock.close()
