@@ -19,7 +19,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--port",
-                "7777",
+                "53",
                 "--max-conns",
                 "1",
             ],
@@ -32,7 +32,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--connect",
-                "localhost:7777",
+                "localhost:53",
                 "--send-text"
             ],
         }
