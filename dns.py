@@ -9,6 +9,7 @@ import binascii
 from bitstring import BitArray
 
 BUFFER_SIZE = 1024
+BIG_DNS = 512
 DNS_DOMAIN_LEN = 255
 DNS_LABEL_LEN = 63
 
