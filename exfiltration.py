@@ -8,12 +8,9 @@ import random
 import struct
 import binascii
 from bitstring import BitArray
+from constants import *
 
-BUFFER_SIZE = 1024
-BIG_DNS = 512
-DNS_DOMAIN_LEN = 255
-DNS_LABEL_LEN = 63
-
+#------------------------------------------------------------------------
 def scramble(data, offset, reverse=False):
     """ Scramble/descramble bytes with specified offset """
     
@@ -37,33 +34,36 @@ def scramble(data, offset, reverse=False):
 
     return b.tobytes()
 
+#------------------------------------------------------------------------
 def random_bytes(n):
     """ Generate random bytearray with n-length """
     return bytearray(os.urandom(n))
 
+#------------------------------------------------------------------------
 def encode_to_domain(data, domain, base_encoding, crypt=None):
     """ Encode data to DNS domain name (RFC 1035) """
 
-    if len(data) + len(domain) + 1 > DNS_DOMAIN_LEN:
+    if len(data) + len(domain) + 1 > MAX_DOMAIN_LEN:
         raise ValueError("The data size greater than 255 bytes!")
     
     if (crypt):
         data = crypt(data)
 
     parts = [data]
-    if len(data) > DNS_LABEL_LEN:
-        parts = [data[i:i+DNS_LABEL_LEN] for i in range(0, len(data), DNS_LABEL_LEN)]
+    if len(data) > MAX_LABEL_LEN:
+        parts = [data[i:i+MAX_LABEL_LEN] for i in range(0, len(data), MAX_LABEL_LEN)]
 
     string = ""
     for frag in parts:
         string += str(base_encoding(frag), 'utf-8') + "."
     string += domain
 
-    if len(string) > DNS_DOMAIN_LEN:
+    if len(string) > MAX_DOMAIN_LEN:
         raise ValueError("The result string's length greater than 255 bytes!")
 
     return string
 
+#------------------------------------------------------------------------
 def decode_from_domain(domain, base_decoding, decrypt=None):
     """ Decode data from DNS domain name"""
     parts = domain.split(".")
@@ -83,12 +83,14 @@ def decode_from_domain(domain, base_decoding, decrypt=None):
     
     return data
 
+#------------------------------------------------------------------------
 def dns_to_q(data, domain, qtype):
     data_msg = encode_to_domain(data, domain, base64.urlsafe_b64encode)
     d_question = dnslib.DNSRecord.question(data_msg, qtype)
 
     return d_question.pack()
 
+#------------------------------------------------------------------------
 def dns_proc_q(raw_question):
     d_question = dnslib.DNSRecord.parse(raw_question)
     d_qname = str(d_question.q.get_qname())
@@ -101,6 +103,7 @@ def dns_proc_q(raw_question):
     print(d_answer, end="\n\n")
     return d_answer.pack()
 
+#------------------------------------------------------------------------
 def dns_from_q(raw_answer):
     d_answer = dnslib.DNSRecord.parse(raw_answer)
 
