@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-import dns
 import sys
 import queue
 import select
 import socket
 import argparse
+import constants as cn
+import exfiltration as exf
 
 DEBUG = None
 
@@ -57,10 +58,10 @@ class Server():
         return
 
     def main(self, data):
-        return dns.dns_proc_q(data)
+        return exf.dns_proc_q(data)
     
     def process_udp(self, sock):
-        request, addr = sock.recvfrom(dns.BUFFER_SIZE)
+        request, addr = sock.recvfrom(cn.SOCK_BUFFER_SIZE)
         if request:
             response = self.main(request)
             sock.sendto(response, addr)
@@ -73,7 +74,7 @@ class Server():
 
     def process_tcp(self, sock):
         try:
-            request = sock.recv(dns.BUFFER_SIZE)
+            request = sock.recv(cn.SOCK_BUFFER_SIZE)
             if request:
                 response = self.main(request)
                 sock.send(response)

