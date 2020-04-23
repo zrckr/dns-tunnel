@@ -8,7 +8,7 @@
             "name": "Python: Dns",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/dns.py",
+            "program": "${workspaceFolder}/exfiltration.py",
             "console": "integratedTerminal"
         },
         {
@@ -18,10 +18,7 @@
             "program": "${workspaceFolder}/server.py",
             "console": "integratedTerminal",
             "args": [
-                "--port",
-                "53",
-                "--max-conns",
-                "1",
+                "--zone-file", "zone.cfg",
             ],
         },
         {
@@ -31,8 +28,7 @@
             "program": "${workspaceFolder}/client.py",
             "console": "integratedTerminal",
             "args": [
-                "--connect",
-                "localhost:53",
+                "--connect", "localhost:53",
                 "--send-text"
             ],
         }
