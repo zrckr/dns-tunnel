@@ -6,15 +6,35 @@ import os
 import base64
 import random
 import struct
+import hashlib
 import binascii
 import dnslib as dns
+
 from bitstring import BitArray
+from Crypto import Random
+from Crypto.Cipher import AES
 
 SOCK_BUFFER_SIZE = 1024
 
 MAX_MSG_LEN    = 512
 MAX_DOMAIN_LEN = 255
 MAX_LABEL_LEN  = 63
+
+#------------------------------------------------------------------------
+__pad = lambda s, bs: s + (bs - len(s) % bs) * chr(bs - len(s) % bs)
+__unpad = lambda s: s[:-ord(s[len(s) - 1:])]
+
+def aes_encrypt(raw, key):
+    key = hashlib.sha256(key).digest()
+    raw = __pad(raw.decode(), AES.block_size)
+    iv = Random.new().read(AES.block_size)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return key, iv + cipher.encrypt(raw.encode())
+
+def aes_decrypt(enc, key):
+    iv = enc[:AES.block_size]
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return __unpad(cipher.decrypt(enc[AES.block_size:]))
 
 #------------------------------------------------------------------------
 def scramble(data, offset, reverse=False):
@@ -38,7 +58,7 @@ def scramble(data, offset, reverse=False):
             y = (a[i-p2] if reverse else b[i-p2 ])
             b[i] = a[i] ^ x ^ y
 
-    return b.tobytes()
+    return bytearray(offset), b.tobytes()
 
 #------------------------------------------------------------------------
 def random_bytes(n):
@@ -54,12 +74,16 @@ def domain_encode(data, domain, base_encoding, crypt=None, *crypt_args):
 
     labels = [i.encode('idna') for i in domain.split('.')]
 
-    if (crypt): data = crypt(data)
+    if (crypt): 
+        key, data = crypt(data, *crypt_args)
 
     if len(data) > 32:
         data = [data[i:i+32] for i in range(0, len(data), 32)]
     else:
         data = [data]
+
+    # first = crypt.__name__+ '$' + key.hex()
+    # data.insert(0, first.encode())
 
     result = []
     big_labels = [base_encoding(i) for i in data]
@@ -87,23 +111,28 @@ def domain_decode(domain, base_decoding, decrypt=None, *decrypt_args):
         pass
 
     if (decrypt):
-        data = decrypt(data)
+        data = decrypt(data, *decrypt_args)
     
     return data
 
+def first_decode(header):
+    def_name, def_args = header.decode().split('$')
+    def_args = bytearray.fromhex(def_args)
+
+    if def_name == 'aes_encrypt':
+        return globals()['aes_decrypt'], def_args
+    else:
+        return globals()['scramble'], tuple(def_args), True
 #------------------------------------------------------------------------
-def dns_process(question):
-    parsed = dns.DNSRecord.parse(question)
-    
-    qname = str(parsed.q.get_qname())
-    qtype = parsed.q.qtype
-    qdata = getattr(dns, dns.QTYPE.get(qtype))
 
-    data = domain_decode(qname, base64.urlsafe_b64decode)
+# data = b'Hello, world!'
+# key = random_bytes(32)
 
-    answer = parsed.reply()
-    d_rr = dns.RR(d_qname, rtype=16, rdata=qdata(data))
-    d_answer.add_answer(d_rr)
-    
-    print(d_answer, end="\n\n")
-    return d_answer.pack()
+# enc = domain_encode(data, 'google.com', base64.urlsafe_b64encode, scramble, (3, 11))
+# enc = domain_encode(data, 'google.com', base64.urlsafe_b64encode, aes_encrypt, key)
+
+# func, *args = domain_decode(str(enc[0]), base64.urlsafe_b64decode, first_decode)
+# for label in enc[1:]:
+#     key, dec = domain_decode(str(label), base64.urlsafe_b64decode, func, *args)
+
+# assert data == dec
