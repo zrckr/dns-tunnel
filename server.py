@@ -2,7 +2,7 @@
 # coding: utf-8
 
 import sys
-import json
+import time
 import base64
 import random
 import select
@@ -45,21 +45,20 @@ class Server():
             self.zones = dns.RR.fromZone(textwrap.dedent(text))
 
     def run(self):
-        print(f"Server is running. Timeout is {self.timeout} secs")
+        print(f"Server is running. Timeout for incoming connections is {self.timeout} secs")
         try:
-            readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
-            while readable:
+            while self.sockets:
+                readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
+
                 for sock in readable:
                     if sock.type == socket.SOCK_DGRAM:
                         self.process_udp(sock)
-                    
+    
                     if sock.type == socket.SOCK_STREAM:
                         if sock == self.tcp_sock:
                             self.accept_tcp(sock)
                         else:
                             self.process_tcp(sock)
-
-                readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
 
         except KeyboardInterrupt:
             print("[Interrupt] Exit by the user...")
@@ -85,6 +84,7 @@ class Server():
         c, addr = sock.accept()
         c.settimeout(self.timeout)
         self.sockets += [c]
+        self.messages[c] = queue.Queue()
 
     def process_tcp(self, sock):
         try:
@@ -105,16 +105,20 @@ class Server():
         qtype = request.q.qtype
         qdata = getattr(dns, dns.QTYPE.get(qtype))
 
+        # try:
+        #     self.decrypt, *self.decrypt_args = exf.domain_decode(qname, base64.urlsafe_b64decode, exf.first_decode)
+        #     return reply.pack()
+        # except Exception:
+        #     pass
+            
         og_data = exf.domain_decode(qname, base64.urlsafe_b64decode)
-        #hash_data = hashlib.sha1(og_data).digest()
-
-        hash_data = og_data
+        # print(hashlib.sha1(og_data).hexdigest())
 
         # og_rr = random.choice([x for x in self.zones if x.rtype == qtype])
         # reply.add_answer(og_rr)
 
-        reply.add_answer(dns.RR(qname, rtype=dns.QTYPE.TXT, rdata=dns.TXT(hash_data)))
-
+        reply.add_answer(dns.RR(qname, rtype=dns.QTYPE.TXT, rdata=dns.TXT(og_data)))
+        
         return reply.pack()
 
 # --------------------------------------------------------------------------------------------------
@@ -135,6 +139,7 @@ if __name__ == "__main__":
                         help='Specifies the timeout for incoming connections')
 
     args = parser.parse_args()
+    DEBUG = args.debug
 
     server = Server('', args.port, args.timeout)
     server.load_config(args.config)
