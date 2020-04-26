@@ -23,6 +23,7 @@ class Server():
         self.timeout = timeout
         self.zones = []
         self.sockets = []
+        self.temp = {}
 
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -47,13 +48,12 @@ class Server():
     def run(self):
         print(f"Server is running. Timeout for incoming connections is {self.timeout} secs")
         try:
-            while self.sockets:
+            while True:
                 readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
-
                 for sock in readable:
                     if sock.type == socket.SOCK_DGRAM:
                         self.process_udp(sock)
-    
+                    
                     if sock.type == socket.SOCK_STREAM:
                         if sock == self.tcp_sock:
                             self.accept_tcp(sock)
@@ -76,7 +76,11 @@ class Server():
         request, addr = sock.recvfrom(exf.SOCK_BUFFER_SIZE)
         if request:
             response = self.dns_resolve(request)
-            sock.sendto(response, addr)
+            if (len(response) > exf.MAX_MSG_LEN):
+                sock.sendto(b'tcp', addr)
+                self.temp[request] = response
+            else:
+                sock.sendto(response, addr)
         else:
             return
 
@@ -84,18 +88,18 @@ class Server():
         c, addr = sock.accept()
         c.settimeout(self.timeout)
         self.sockets += [c]
-        self.messages[c] = queue.Queue()
 
     def process_tcp(self, sock):
-        try:
-            request = sock.recv(exf.SOCK_BUFFER_SIZE)
-            if request:
-                response = self.dns_resolve(request)
-                sock.send(response)
-        except:
+        request = sock.recv(exf.SOCK_BUFFER_SIZE)
+        if (request in self.temp):
+            sock.send(self.temp[request])
+        elif request:
+            response = self.dns_resolve(request)
+            sock.send(response)
+        else:
             sock.close()
             self.sockets.remove(sock)
-            return
+        return
 
     def dns_resolve(self, data):
         request = dns.DNSRecord.parse(data)
