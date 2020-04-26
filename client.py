@@ -5,6 +5,7 @@ import sys
 import time
 import base64
 import random
+import select
 import socket
 import struct
 import hashlib
@@ -20,43 +21,43 @@ class Client():
         self.addr = addr
         self.timeout = args.timeout
         self.domain = args.domain
-        self.is_text = args.text
-        self.is_file = args.file
-        self.is_rand = args.rand
         self.qtype = args.qtype
+        self.modes = (args.text, args.file, args.rand)
         self.key = args.aes_key or args.scr_offset
-    
+        
+        try:
+            self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_sock.settimeout(self.timeout)
+
+            self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_sock.setblocking(True)
+            self.tcp_sock.settimeout(self.timeout)
+
+        except socket.error as error:
+            print("[Init]", str(error))
+        return None
+        
     def run(self):
         try:
             while True:
-                if (self.is_text):
+                if (self.modes[0]):
                     data = self.read_text()
-                elif (self.is_rand):
+                elif (self.modes[1]):
                     data = self.read_random()
                     time.sleep(5)
-                elif (self.is_file):
+                elif (self.modes[2]):
                     data = self.read_file()
-                hash_ = hashlib.sha1(data).hexdigest()
-
-                # if (self.key):
-                #     queries = self.dns_ask(data, exf.aes_encrypt, self.key.encode())
-                # elif (self.offset):
-                #     queries = self.dns_ask(data, exf.scramble, self.offset)     
-                # else:
-                #     queries = self.dns_ask(data)
 
                 queries = self.dns_ask(data, None)
-                if (len(max(queries)) > exf.MAX_MSG_LEN):
-                    responses = self.send_group(queries, socket.SOCK_STREAM)
-                else:
-                    responses = self.send_group(queries, socket.SOCK_DGRAM)
-
-                new_data = self.dns_fin(responses)
-                hash__ = hashlib.sha1(new_data).hexdigest()
-                print("$", hash_, hash__ == hash_)
-
-                if (self.is_file):
-                    break
+                answers = []
+                for q in queries:
+                    response = self.send(q, socket.SOCK_DGRAM)
+                    if (response == b'tcp'):
+                        response = self.send(q, socket.SOCK_STREAM)
+                    answers += [response]
+                
+                print("$", self.dns_fin(answers))
+                if (self.modes[2]): break
                 
         except KeyboardInterrupt:
             print("[Interrupt] Exit by the user...")
@@ -67,24 +68,18 @@ class Client():
         except socket.timeout:
             print("[Info]", "Server response timed out! Exiting...")
 
-    def send_group(self, lst, protocol):
-        with socket.socket(socket.AF_INET, protocol) as sock:
-            if protocol is socket.SOCK_STREAM:
-                sock.setblocking(True)
-            sock.settimeout(self.timeout)
-            sock.connect(self.addr)
+    def send(self, data, protocol):
+        if protocol == socket.SOCK_STREAM:
+            sock = self.tcp_sock
+        else:
+            sock = self.udp_sock
+        sock.connect(self.addr)
+        sock.send(data)
 
-            responses = []
-            for data in lst:
-                sock.send(data)
-
-                response = sock.recv(exf.SOCK_BUFFER_SIZE)
-                if not response:
-                    raise Exception('Sending a request successfully failed!')
-                else:
-                    responses += [response]
-        
-            return responses
+        response = sock.recv(exf.SOCK_BUFFER_SIZE)
+        if not response:
+            raise Exception('Sending a request successfully failed!')
+        return response
 
     def read_text(self):
         text = input("> ").encode()
@@ -99,7 +94,7 @@ class Client():
 
     def read_file(self, buffer=32):
         whole = b''
-        with open(self.is_file, 'rb') as file:
+        with open(self.modes[2], 'rb') as file:
             data = file.read(buffer)
             line = 0
 
@@ -133,7 +128,7 @@ if __name__ == "__main__":
                         help='Establishes a connection to the server at the specified address:port')
     
     parser.add_argument('-t', '--timeout', dest='timeout', type=int, default=60,
-                        help="Specifies the timeout for server response")
+                        help="Specifies the timeout for server UDP response")
     
     parser.add_argument('-st', '--send-text', dest='text', action='store_true',
                         help='Sends a text string to the server')
