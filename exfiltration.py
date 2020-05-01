@@ -5,6 +5,7 @@ import io
 import os
 import base64
 import random
+import socket
 import struct
 import hashlib
 import binascii
@@ -21,12 +22,12 @@ MAX_DOMAIN_LEN = 255
 MAX_LABEL_LEN  = 63
 
 #------------------------------------------------------------------------
-__pad = lambda s, bs: s + (bs - len(s) % bs) * chr(bs - len(s) % bs)
-__unpad = lambda s: s[:-ord(s[len(s) - 1:])]
+__pad__ = lambda s, bs: s + (bs - len(s) % bs) * chr(bs - len(s) % bs)
+__unpad__ = lambda s: s[:-ord(s[len(s) - 1:])]
 
 def aes_encrypt(raw, key):
     key = hashlib.sha256(key).digest()
-    raw = __pad(raw.decode(), AES.block_size)
+    raw = __pad__(raw.hex(), AES.block_size)
     iv = Random.new().read(AES.block_size)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return key, iv + cipher.encrypt(raw.encode())
@@ -34,7 +35,7 @@ def aes_encrypt(raw, key):
 def aes_decrypt(enc, key):
     iv = enc[:AES.block_size]
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    return __unpad(cipher.decrypt(enc[AES.block_size:]))
+    return __unpad__(cipher.decrypt(enc[AES.block_size:]))
 
 #------------------------------------------------------------------------
 def scramble(data, offset, reverse=False):
@@ -93,7 +94,6 @@ def domain_encode(data, domain, base_encoding, crypt=None, *crypt_args):
 
     return result
 
-#------------------------------------------------------------------------
 def domain_decode(domain, base_decoding, decrypt=None, *decrypt_args):
     """ 
         Decodes data from DNS domain name and returns bytes.
@@ -115,6 +115,7 @@ def domain_decode(domain, base_decoding, decrypt=None, *decrypt_args):
     
     return data
 
+#------------------------------------------------------------------------
 def first_decode(header):
     def_name, def_args = header.decode().split('$')
     def_args = bytearray.fromhex(def_args)
@@ -123,16 +124,39 @@ def first_decode(header):
         return globals()['aes_decrypt'], def_args
     else:
         return globals()['scramble'], tuple(def_args), True
+
 #------------------------------------------------------------------------
+def ip_encode(data, domain, ipv6=False, crypt=None, *crypt_args):
+    if (crypt): 
+        key, data = crypt(data, *crypt_args)
 
-# data = b'Hello, world!'
-# key = random_bytes(32)
+    data = base64.b32encode(data)
+    chunk = 16 if ipv6 else 4
 
-# enc = domain_encode(data, 'google.com', base64.urlsafe_b64encode, scramble, (3, 11))
-# enc = domain_encode(data, 'google.com', base64.urlsafe_b64encode, aes_encrypt, key)
+    if (len(data) > chunk):
+        data = [data[i:i+chunk] for i in range(0, len(data), chunk)]
+    else:
+        data = [data]
 
-# func, *args = domain_decode(str(enc[0]), base64.urlsafe_b64decode, first_decode)
-# for label in enc[1:]:
-#     key, dec = domain_decode(str(label), base64.urlsafe_b64decode, func, *args)
+    if (ipv6):
+        qtype = dns.QTYPE.AAAA
+        qdata = [dns.AAAA(socket.inet_ntop(socket.AF_INET6, i)) for i in data]
+    else:
+        qtype = dns.QTYPE.AAAA
+        qdata = [dns.A(socket.inet_ntop(socket.AF_INET, i)) for i in data]
 
-# assert data == dec
+    rr = [dns.RR(rname=domain, rtype=qtype, rdata=i, ttl=60) for i in qdata]
+    return rr
+
+def ip_decode(records, decrypt=None, *decrypt_args):
+    result = b''
+    for r in records:
+        if (len(r.rdata.data) > 4):
+            raw = socket.inet_pton(socket.AF_INET6, str(r.rdata))
+        else:
+            raw = socket.inet_pton(socket.AF_INET, str(r.rdata))
+        result += base64.b32decode(raw)
+        
+    return result
+
+#------------------------------------------------------------------------
