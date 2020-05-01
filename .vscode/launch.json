@@ -19,7 +19,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--zone-file", "zone.cfg",
-                "--debug",
+                // "--debug",
             ],
         },
         {
@@ -31,9 +31,9 @@
             "args": [
                 "--connect", "localhost:53",
                 "--send-text",
-                "--scramble", "3", "11",
-                "--timeout", "360",
-                // "--aes", "hello!",
+                "--qtype", "AAAA",
+                "--timeout", "30",
+                "--tcp",
             ],
         }
     ],
