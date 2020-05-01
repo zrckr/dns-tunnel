@@ -21,25 +21,33 @@ class Client():
         self.addr = addr
         self.timeout = args.timeout
         self.domain = args.domain
-        self.qtype = args.qtype
-        self.modes = (args.text, args.file, args.rand)
-        self.key = args.aes_key or args.scr_offset
+        self.qtype = args.qtype.upper()
+        self.modes = (args.text, args.rand, args.file)
+        # self.key = (args.aes_key or args.scramble)
         self.force_tcp = args.force_tcp
         
         try:
             self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.udp_sock.settimeout(self.timeout)
+            self.udp_sock.connect(self.addr)
 
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_sock.setblocking(True)
             self.tcp_sock.settimeout(self.timeout)
+            self.tcp_sock.connect(self.addr)
 
-        except socket.error as error:
-            print("[Init]", str(error))
-        return None
+        except Exception:
+            print("[Init]", "TCP connection to the server is not established!")
+            self.tcp_sock.close()
+            self.udp_sock.close()
+            sys.exit(1)
         
     def run(self):
-        try:
+        try:   
+            # if (self.key):
+            #     if (type(self.key) == list):
+            #         self.send_only(socket.SOCK_DGRAM, bytearray(self.key))
+           
             while True:
                 if (self.modes[0]):
                     data = self.read_text()
@@ -48,21 +56,31 @@ class Client():
                     time.sleep(5)
                 elif (self.modes[2]):
                     data = self.read_file()
+                
+                old_hash = hashlib.sha256(data).digest()
 
-                queries = self.dns_ask(data, None)
+                queries = self.dns_ask(data, exf.scramble, (3, 11))
+                
                 answers = []
                 for q in queries:
                     if (self.force_tcp):
                         response = self.send_recv(socket.SOCK_STREAM, q)
-                    else
+                    else:
                         response = self.send_recv(socket.SOCK_DGRAM, q)
                     
                     if (response == b'tcp'):
-                        response = self.send_recv(socket.SOCK_STREAM)
+                        response = self.send_recv(socket.SOCK_STREAM, q)
                     answers += [response]
-                
-                print("$", self.dns_fin(answers))
-                if (self.modes[2]): break
+               
+                new_data = self.dns_extract(answers)
+                new_hash = hashlib.sha256(new_data).digest()
+
+                print("$", new_hash.hex(), new_hash == old_hash)
+                if (self.modes[2]): 
+                    with open('downloaded.txt', 'wb') as file:
+                        file.write(new_data)
+                    print("File downloaded.txt is saved!")
+                    break
                 
         except KeyboardInterrupt:
             print("[Interrupt] Exit by the user...")
@@ -72,31 +90,30 @@ class Client():
             print("[Socket]", str(error))
         except socket.timeout:
             print("[Info]", "Server response timed out! Exiting...")
+        finally:
+            self.tcp_sock.close()
+            self.udp_sock.close()
 
     def send_recv(self, family, data=None):
         if (family == socket.SOCK_DGRAM):
             sock = self.udp_sock
         else:
             sock = self.tcp_sock
-        sock.connect(self.addr)
+        
         if (data):
             sock.send(data)
-        
         response = sock.recv(exf.SOCK_BUFFER_SIZE)
+        
         if not response:
             raise Exception('Error in getting a response!')
         return response
 
     def read_text(self):
-        text = input("> ").encode()
-        return text
+        return input("> ").encode()
 
     def read_random(self):
-        size = random.choice(
-            [8, 16, 32, 64, 128, 256, 512, 1024])
-        
-        rand = exf.random_bytes(size)
-        return rand
+        size = random.choice([32, 64, 128, 256, 512, 768])
+        return exf.random_bytes(size)
 
     def read_file(self, buffer=32):
         whole = b''
@@ -105,23 +122,30 @@ class Client():
             line = 0
 
             while (data):
-                whole += struct.pack('!I32B', line, data)      
+                whole += data.ljust(buffer, b'\0')  
                 data = file.read(buffer)
                 line += 1
-        
+
         return whole
 
     def dns_ask(self, data, encrypt, *args):
-        labels = exf.domain_encode(data, self.domain, base64.urlsafe_b64encode, encrypt, *args)
-        queries = [dns.DNSRecord.question(label, self.qtype).pack() for label in labels]
+        enc_data = exf.domain_encode(data, self.domain, base64.urlsafe_b64encode, encrypt, *args)
+        queries = [dns.DNSRecord.question(i, self.qtype).pack() for i in enc_data]
         return queries
 
-    def dns_fin(self, answers):
+    def dns_extract(self, answers):
         result = b''
         for answer in answers:
             reply = dns.DNSRecord.parse(answer)
-            if len(reply.rr) > 0:
-                result += reply.rr[0].rdata.data[0]
+            qtype = reply.q.qtype
+
+            for rd in reply.rr:
+                if (qtype == dns.QTYPE.A or qtype == dns.QTYPE.AAAA):
+                    result += exf.ip_decode(rd)
+                elif (qtype == dns.QTYPE.TXT):
+                    result += rd.rdata.data[0]
+                else:
+                    result += exf.domain_decode(str(rd.rdata.label), base64.urlsafe_b64decode)
         return result
 
 # --------------------------------------------------------------------------------------------------
@@ -151,16 +175,16 @@ if __name__ == "__main__":
     parser.add_argument('-q', '--qtype', dest='qtype', type=str, default="A",
                         help='Specifies the type of record for a DNS question')
     
-    parser.add_argument('-s', '--scramble', dest='scr_offset', type=int, nargs='+',
+    parser.add_argument('-s', '--scramble', dest='scramble', type=int, nargs='+',
                         help='Scrambles outgoing traffic passing through the DNS tunnel.\n'+
                             'You need to specify an offset, e.g. [3 11]')
 
-    parser.add_argument('-a', '--aes', dest='aes_key', type=bytes,
+    parser.add_argument('-a', '--aes', dest='aes_key', type=str,
                         help='Encrypts with AES outgoing traffic passing through the DNS tunnel.\n'+
                             'You need to specify an encryption key')
 
     parser.add_argument('-tcp', '--tcp', dest='force_tcp', action='store_true',
-                        help='Forcibly sends DNS messages over TCP connection')                       
+                        help='Forcibly sends DNS messages over TCP connection') 
 
     args = parser.parse_args()
     
@@ -171,8 +195,11 @@ if __name__ == "__main__":
         (args.file and args.rand):
        parser.error('Only or at least one sending mode must be specified!')
 
-    if (args.aes_key and args.scr_offset):
+    if (args.aes_key and args.scramble):
         parser.error('Only encryption or scrambling must be specified!')
+
+    if (args.scramble and len(args.scramble) > 2):
+        parser.error('Only two values must be specified for the offset!')
 
     if (args.text):
         print("[Mode]", f"Sending text messages ...")
