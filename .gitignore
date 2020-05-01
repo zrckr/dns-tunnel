@@ -143,3 +143,6 @@ cython_debug/
 
 # Other folder
 other/
+
+# Batch files
+*.bat
