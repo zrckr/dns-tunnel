@@ -76,9 +76,12 @@ class Server():
         request, addr = sock.recvfrom(exf.SOCK_BUFFER_SIZE)
         if request:
             response = self.dns_resolve(request)
+            if DEBUG: 
+                response = exf.random_bytes(600)
+            
             if (len(response) > exf.MAX_MSG_LEN):
                 sock.sendto(b'tcp', addr)
-                self.temp[request] = response
+                self.temp[addr[0]] = response
             else:
                 sock.sendto(response, addr)
         else:
@@ -87,13 +90,16 @@ class Server():
     def accept_tcp(self, sock):
         c, addr = sock.accept()
         c.settimeout(self.timeout)
-        self.sockets += [c]
-
+        
+        if (addr[0] in self.temp):
+            c.send(self.temp[addr[0]])
+            c.close()
+        else:
+            self.sockets += [c]
+        
     def process_tcp(self, sock):
         request = sock.recv(exf.SOCK_BUFFER_SIZE)
-        if (request in self.temp):
-            sock.send(self.temp[request])
-        elif request:
+        if request:
             response = self.dns_resolve(request)
             sock.send(response)
         else:

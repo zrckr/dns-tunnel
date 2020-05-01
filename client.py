@@ -51,9 +51,9 @@ class Client():
                 queries = self.dns_ask(data, None)
                 answers = []
                 for q in queries:
-                    response = self.send(q, socket.SOCK_DGRAM)
+                    response = self.send_recv(socket.SOCK_DGRAM, q)
                     if (response == b'tcp'):
-                        response = self.send(q, socket.SOCK_STREAM)
+                        response = self.send_recv(socket.SOCK_STREAM)
                     answers += [response]
                 
                 print("$", self.dns_fin(answers))
@@ -68,17 +68,18 @@ class Client():
         except socket.timeout:
             print("[Info]", "Server response timed out! Exiting...")
 
-    def send(self, data, protocol):
-        if protocol == socket.SOCK_STREAM:
-            sock = self.tcp_sock
-        else:
+    def send_recv(self, family, data=None):
+        if (family == socket.SOCK_DGRAM):
             sock = self.udp_sock
+        else:
+            sock = self.tcp_sock
         sock.connect(self.addr)
-        sock.send(data)
-
+        if (data):
+            sock.send(data)
+        
         response = sock.recv(exf.SOCK_BUFFER_SIZE)
         if not response:
-            raise Exception('Sending a request successfully failed!')
+            raise Exception('Error in getting a response!')
         return response
 
     def read_text(self):
