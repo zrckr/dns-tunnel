@@ -2,7 +2,7 @@
 # coding: utf-8
 
 import sys
-import time
+import time 
 import base64
 import random
 import select
@@ -13,8 +13,13 @@ import textwrap
 
 import dnslib as dns
 import exfiltration as exf
+from datetime import datetime
 
 DEBUG = None
+
+def print_with_time(head, message):
+        curr_time = datetime.now().strftime("%H:%M:%S.%f")
+        print(f"[{head}] [{curr_time[:-3]}]", message)
 
 class Server():
     def __init__(self, host, port, timeout):
@@ -23,7 +28,8 @@ class Server():
         self.timeout = timeout
         self.zones = []
         self.sockets = []
-        self.temp = {}
+        self.last = {}
+        self.tcps = {}
 
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -46,10 +52,11 @@ class Server():
             self.zones = dns.RR.fromZone(textwrap.dedent(text))
 
     def run(self):
-        print(f"Server is running. Timeout for incoming connections is {self.timeout} secs")
+        print(f"[Info] Server is running!")
         try:
             while True:
-                readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
+                readable, writable, exceptional = select.select(self.sockets, [], [])
+                now = time.time()
                 for sock in readable:
                     if sock.type == socket.SOCK_DGRAM:
                         self.process_udp(sock)
@@ -60,28 +67,37 @@ class Server():
                         else:
                             self.process_tcp(sock)
 
+                closed = []
+                for sock in self.last:
+                    if sock not in self.last and now-self.last[sock] > self.timeout:
+                        sock.close()
+                        closed += [sock]
+
+                for dead in closed:
+                    del self.last[dead]
+
+                for sock in exceptional:
+                    self.sockets.remove(sock)
+                    sock.close()
+                
         except KeyboardInterrupt:
             print("[Interrupt] Exit by the user...")
         except Exception as error:
             print("[Info]", str(error))
-        except socket.timeout:
-            print("[Info]", "Timed out! Exiting...")
 
-        print("Server is shutting down!")
+        print("[Exit] Server is shutting down!")
         for sock in self.sockets:
             sock.close()
         return
  
     def process_udp(self, sock):
         request, addr = sock.recvfrom(exf.SOCK_BUFFER_SIZE)
+        print_with_time("UDP, "f"Received {len(request)} bytes from {addr}")
+
         if request:
             response = self.dns_resolve(request)
-            if DEBUG: 
-                response = exf.random_bytes(600)
-            
             if (len(response) > exf.MAX_MSG_LEN):
                 sock.sendto(b'tcp', addr)
-                self.temp[addr[0]] = response
             else:
                 sock.sendto(response, addr)
         else:
@@ -89,46 +105,55 @@ class Server():
 
     def accept_tcp(self, sock):
         c, addr = sock.accept()
-        c.settimeout(self.timeout)
-        
-        if (addr[0] in self.temp):
-            c.send(self.temp[addr[0]])
-            c.close()
-        else:
-            self.sockets += [c]
+        c.setblocking(0)
+
+        print_with_time("TCP", f"{addr} connected")
+        self.sockets += [c]
+        self.tcps[c] = addr
         
     def process_tcp(self, sock):
         request = sock.recv(exf.SOCK_BUFFER_SIZE)
+        print_with_time("TCP", f"Received {len(request)} bytes from {self.tcps[sock]}")
+        
         if request:
             response = self.dns_resolve(request)
             sock.send(response)
         else:
             sock.close()
             self.sockets.remove(sock)
-        return
+            del self.tcps[sock]
 
-    def dns_resolve(self, data):
-        request = dns.DNSRecord.parse(data)
+    def dns_resolve(self, query):
+        request = dns.DNSRecord.parse(query)
+        domain = str(request.q.get_qname())
+        qtype =  request.q.qtype
+        
+        data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.scramble, (3, 11), True)
+
+        domain = domain.split('.', 1)[-1]
+        
+        if (qtype == dns.QTYPE.A):
+            data = exf.ip_encode(data, False)
+        
+        elif (qtype == dns.QTYPE.AAAA):
+            data = exf.ip_encode(data, True)
+
+        elif (qtype ==  dns.QTYPE.TXT):
+            data = [dns.TXT(data)]
+        
+        else:
+            data = exf.domain_encode(data, domain, base64.urlsafe_b64encode)
+            if (qtype == dns.QTYPE.CNAME):
+                data = [dns.CNAME(i) for i in data]
+            elif (qtype ==  dns.QTYPE.MX):
+                data = [dns.MX(i) for i in data]
+
         reply = request.reply()
+        for rd in data:
+            reply.add_answer(dns.RR(domain, rtype=qtype, rdata=rd))
         
-        qname = str(request.q.get_qname())
-        qtype = request.q.qtype
-        qdata = getattr(dns, dns.QTYPE.get(qtype))
-
-        # try:
-        #     self.decrypt, *self.decrypt_args = exf.domain_decode(qname, base64.urlsafe_b64decode, exf.first_decode)
-        #     return reply.pack()
-        # except Exception:
-        #     pass
-            
-        og_data = exf.domain_decode(qname, base64.urlsafe_b64decode)
-        # print(hashlib.sha1(og_data).hexdigest())
-
-        # og_rr = random.choice([x for x in self.zones if x.rtype == qtype])
-        # reply.add_answer(og_rr)
-
-        reply.add_answer(dns.RR(qname, rtype=dns.QTYPE.TXT, rdata=dns.TXT(og_data)))
-        
+        print_with_time(">>>", f"Sending back the request in size {len(reply.pack())} bytes")
+        print("---------------------------------------------------------------")
         return reply.pack()
 
 # --------------------------------------------------------------------------------------------------
@@ -145,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--debug', dest='debug', action="store_true",
                         help='Displays debugging information')
 
-    parser.add_argument('-t', '--timeout', dest='timeout', type=int, default=60,
+    parser.add_argument('-t', '--timeout', dest='timeout', type=int, default=10,
                         help='Specifies the timeout for incoming connections')
 
     args = parser.parse_args()
