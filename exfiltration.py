@@ -3,11 +3,8 @@
 
 import io
 import os
-import base64
 import random
 import socket
-import struct
-import hashlib
 import binascii
 import dnslib as dns
 
@@ -26,11 +23,10 @@ __pad__ = lambda s, bs: s + (bs - len(s) % bs) * chr(bs - len(s) % bs)
 __unpad__ = lambda s: s[:-ord(s[len(s) - 1:])]
 
 def aes_encrypt(raw, key):
-    key = hashlib.sha256(key).digest()
     raw = __pad__(raw.hex(), AES.block_size)
     iv = Random.new().read(AES.block_size)
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    return key, iv + cipher.encrypt(raw.encode())
+    return iv + cipher.encrypt(raw.encode())
 
 def aes_decrypt(enc, key):
     iv = enc[:AES.block_size]
@@ -39,8 +35,9 @@ def aes_decrypt(enc, key):
 
 #------------------------------------------------------------------------
 def scramble(data, offset, reverse=False):
-    """ Scrambles/descrambles bytes with specified offset """
-    
+    """ 
+        Scrambles/descrambles bytes with specified offset
+    """
     a = BitArray(data, endian="little")
     b = BitArray(length=len(a))
     
@@ -59,32 +56,33 @@ def scramble(data, offset, reverse=False):
             y = (a[i-p2] if reverse else b[i-p2 ])
             b[i] = a[i] ^ x ^ y
 
-    return bytearray(offset), b.tobytes()
+    return b.tobytes()
 
 #------------------------------------------------------------------------
 def random_bytes(n):
     """ Generates random bytearray with n-length """
     return bytearray(os.urandom(n))
 
+def chunk(data, chunk_size):
+    """ Splits data into equal-sized chunks """
+    return [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
+
 #------------------------------------------------------------------------
-def domain_encode(data, domain, base_encoding, crypt=None, *crypt_args):
+def domain_encode(data, domain, base_encoding, encrypt=None, *crypt_args):
     """ 
         Encodes data to DNS domain name (RFC 1035).
         Returns list of DNSLabel objects with encapsulated data.
     """
-
     labels = [i.encode('idna') for i in domain.split('.')]
 
-    if (crypt): 
-        key, data = crypt(data, *crypt_args)
-
     if len(data) > 32:
-        data = [data[i:i+32] for i in range(0, len(data), 32)]
+        data = chunk(data, 32)
     else:
         data = [data]
 
-    # first = crypt.__name__+ '$' + key.hex()
-    # data.insert(0, first.encode())
+    if (encrypt):
+        for i in range(len(data)):
+            data[i] = encrypt(data[i], *crypt_args)
 
     result = []
     big_labels = [base_encoding(i) for i in data]
@@ -94,7 +92,7 @@ def domain_encode(data, domain, base_encoding, crypt=None, *crypt_args):
 
     return result
 
-def domain_decode(domain, base_decoding, decrypt=None, *decrypt_args):
+def domain_decode(domain, base_decoding, decrypt=None, *crypt_args):
     """ 
         Decodes data from DNS domain name and returns bytes.
     """
@@ -111,52 +109,46 @@ def domain_decode(domain, base_decoding, decrypt=None, *decrypt_args):
         pass
 
     if (decrypt):
-        data = decrypt(data, *decrypt_args)
-    
+        data = decrypt(data, *crypt_args)
+
     return data
 
 #------------------------------------------------------------------------
-def first_decode(header):
-    def_name, def_args = header.decode().split('$')
-    def_args = bytearray.fromhex(def_args)
+def ip_encode(data, ipv6):
+    """ 
+        Encodes data to AAAA or A rdata types.
+        Returns list of RDATA objects with encapsulated data.
+    """
+    chunk_size = 16 if ipv6 else 4
 
-    if def_name == 'aes_encrypt':
-        return globals()['aes_decrypt'], def_args
-    else:
-        return globals()['scramble'], tuple(def_args), True
-
-#------------------------------------------------------------------------
-def ip_encode(data, domain, ipv6=False, crypt=None, *crypt_args):
-    if (crypt): 
-        key, data = crypt(data, *crypt_args)
-
-    data = base64.b32encode(data)
-    chunk = 16 if ipv6 else 4
-
-    if (len(data) > chunk):
-        data = [data[i:i+chunk] for i in range(0, len(data), chunk)]
+    if (len(data) > chunk_size):
+        data = chunk(data, chunk_size)
     else:
         data = [data]
+
+    for i in range(len(data)):
+        data[i] = data[i].ljust(chunk_size, b'\x00')
 
     if (ipv6):
         qtype = dns.QTYPE.AAAA
         qdata = [dns.AAAA(socket.inet_ntop(socket.AF_INET6, i)) for i in data]
     else:
-        qtype = dns.QTYPE.AAAA
+        qtype = dns.QTYPE.A
         qdata = [dns.A(socket.inet_ntop(socket.AF_INET, i)) for i in data]
 
-    rr = [dns.RR(rname=domain, rtype=qtype, rdata=i, ttl=60) for i in qdata]
-    return rr
+    return qdata
 
-def ip_decode(records, decrypt=None, *decrypt_args):
-    result = b''
-    for r in records:
-        if (len(r.rdata.data) > 4):
-            raw = socket.inet_pton(socket.AF_INET6, str(r.rdata))
-        else:
-            raw = socket.inet_pton(socket.AF_INET, str(r.rdata))
-        result += base64.b32decode(raw)
-        
-    return result
+def ip_decode(record):
+    """ 
+        Decodes data from AAAA or A (from IPv6 or IPv4 addresses)
+        resource record and returns bytes.
+    """
+    raw = b''
 
+    if (len(record.rdata.data) > 4):
+        raw += socket.inet_pton(socket.AF_INET6, str(record.rdata))
+    else:
+        raw += socket.inet_pton(socket.AF_INET, str(record.rdata))
+
+    return raw.rstrip(b'\x00')
 #------------------------------------------------------------------------
