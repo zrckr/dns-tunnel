@@ -24,6 +24,7 @@ class Client():
         self.qtype = args.qtype
         self.modes = (args.text, args.file, args.rand)
         self.key = args.aes_key or args.scr_offset
+        self.force_tcp = args.force_tcp
         
         try:
             self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,7 +52,11 @@ class Client():
                 queries = self.dns_ask(data, None)
                 answers = []
                 for q in queries:
-                    response = self.send_recv(socket.SOCK_DGRAM, q)
+                    if (self.force_tcp):
+                        response = self.send_recv(socket.SOCK_STREAM, q)
+                    else
+                        response = self.send_recv(socket.SOCK_DGRAM, q)
+                    
                     if (response == b'tcp'):
                         response = self.send_recv(socket.SOCK_STREAM)
                     answers += [response]
@@ -152,7 +157,10 @@ if __name__ == "__main__":
 
     parser.add_argument('-a', '--aes', dest='aes_key', type=bytes,
                         help='Encrypts with AES outgoing traffic passing through the DNS tunnel.\n'+
-                            'You need to specify an encryption key')                       
+                            'You need to specify an encryption key')
+
+    parser.add_argument('-tcp', '--tcp', dest='force_tcp', action='store_true',
+                        help='Forcibly sends DNS messages over TCP connection')                       
 
     args = parser.parse_args()
     
