@@ -141,5 +141,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Other folder
+# Other files and folder
 other/
+*.txt
