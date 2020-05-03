@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Exf",
+            "name": "Exfiltration",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/exfiltration.py",
@@ -35,12 +35,15 @@
                 "--timeout", "30",
                 "--tcp",
             ],
+        },
+        {
+            "name": "Sniffer",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sniffer.py",
+            "console": "integratedTerminal",
+            "args": [
+            ],
         }
     ],
-    "compounds": [
-        {
-            "name": "Client/Server",
-            "configurations": ["Server", "Client"]
-        }
-    ]
 }
