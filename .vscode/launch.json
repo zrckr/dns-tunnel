@@ -32,8 +32,8 @@
                 "--connect", "localhost:53",
                 "--send-text",
                 "--qtype", "AAAA",
-                "--timeout", "30",
-                "--tcp",
+                "--timeout", "90",
+                "--scramble", "3", "11",
             ],
         },
         {
