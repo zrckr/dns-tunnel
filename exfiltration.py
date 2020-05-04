@@ -3,14 +3,17 @@
 
 import io
 import os
+import base64
 import random
 import socket
+import hashlib
 import binascii
 import dnslib as dns
 
 from bitstring import BitArray
 from Crypto import Random
 from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 SOCK_BUFFER_SIZE = 1024
 
@@ -19,22 +22,20 @@ MAX_DOMAIN_LEN = 255
 MAX_LABEL_LEN  = 63
 
 #------------------------------------------------------------------------
-__pad__ = lambda s, bs: s + (bs - len(s) % bs) * chr(bs - len(s) % bs)
-__unpad__ = lambda s: s[:-ord(s[len(s) - 1:])]
-
 def aes_encrypt(raw, key):
-    raw = __pad__(raw.hex(), AES.block_size)
-    iv = Random.new().read(AES.block_size)
+    key = hashlib.sha256(key.encode()).digest()
+    iv = Random.new().read(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    return iv + cipher.encrypt(raw.encode())
+    return iv + cipher.encrypt(pad(raw, 16))
 
 def aes_decrypt(enc, key):
-    iv = enc[:AES.block_size]
+    key = hashlib.sha256(key.encode()).digest()
+    iv = enc[:16]
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    return __unpad__(cipher.decrypt(enc[AES.block_size:]))
+    return unpad(cipher.decrypt(enc[16:]), 16)
 
 #------------------------------------------------------------------------
-def scramble(data, offset, reverse=False):
+def scramble(data, offset, reverse=False) -> bytes:
     """ 
         Scrambles/descrambles bytes with specified offset
     """
@@ -45,10 +46,13 @@ def scramble(data, offset, reverse=False):
         raise ValueError("The offset must be a tuple with two values!")
     p1, p2 = offset
 
+    if p1 >= p2:
+        raise ValueError("The first index must be less than the second index!")
+
     for i in range(len(a)): 
         if (i < p1):
             b[i] = a[i]
-        elif (i < p2 ):
+        elif (i < p2):
             x = (a[i-p1] if reverse else b[i-p1])
             b[i] = a[i] ^ x
         else:
@@ -59,24 +63,24 @@ def scramble(data, offset, reverse=False):
     return b.tobytes()
 
 #------------------------------------------------------------------------
-def random_bytes(n):
+def random_bytes(n) -> bytearray:
     """ Generates random bytearray with n-length """
     return bytearray(os.urandom(n))
 
-def chunk(data, chunk_size):
+def chunk(data, chunk_size) -> list:
     """ Splits data into equal-sized chunks """
     return [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
 
 #------------------------------------------------------------------------
-def domain_encode(data, domain, base_encoding, encrypt=None, *crypt_args):
+def domain_encode(data, domain, base_encoding, encrypt=None, *crypt_args) -> list:
     """ 
         Encodes data to DNS domain name (RFC 1035).
         Returns list of DNSLabel objects with encapsulated data.
     """
     labels = [i.encode('idna') for i in domain.split('.')]
 
-    if len(data) > 32:
-        data = chunk(data, 32)
+    if len(data) > 40:
+        data = chunk(data, 40)
     else:
         data = [data]
 
@@ -92,7 +96,7 @@ def domain_encode(data, domain, base_encoding, encrypt=None, *crypt_args):
 
     return result
 
-def domain_decode(domain, base_decoding, decrypt=None, *crypt_args):
+def domain_decode(domain, base_decoding, decrypt=None, *crypt_args) -> bytes:
     """ 
         Decodes data from DNS domain name and returns bytes.
     """
@@ -114,7 +118,7 @@ def domain_decode(domain, base_decoding, decrypt=None, *crypt_args):
     return data
 
 #------------------------------------------------------------------------
-def ip_encode(data, ipv6):
+def ip_encode(data, ipv6) -> list:
     """ 
         Encodes data to AAAA or A rdata types.
         Returns list of RDATA objects with encapsulated data.
@@ -138,7 +142,7 @@ def ip_encode(data, ipv6):
 
     return qdata
 
-def ip_decode(record):
+def ip_decode(record) -> bytes:
     """ 
         Decodes data from AAAA or A (from IPv6 or IPv4 addresses)
         resource record and returns bytes.
