@@ -30,11 +30,11 @@ OBS_QTYPE = [
 
 class PcapFile:
     def __init__(self, filename):
-        self.file = open(filename, 'wb')
+        self.filename = filename
 
     def write_header(self):
-        """
-            struct pcap_hdr:
+        """ Writes global header to .pcap file"""
+        """ struct pcap_hdr:
                 u32 magic_number;       /* magic number */
                 u16 version_major;      /* major version number */
                 u16 version_minor;      /* minor version number */
@@ -43,22 +43,27 @@ class PcapFile:
                 u32 snaplen;            /* max length of captured packets, in octets */
                 u32 network;            /* data link type */
         """
-        pcap_hdr = struct.pack("I 2H i 3I", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
-        self.file.write(pcap_hdr)
+        pcap_hdr = struct.pack("!I 2H i 3I", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
+        with open(self.filename, 'wb') as file:
+            file.write(pcap_hdr)
 
-    def write(self, data):
+    def write_packet(self, data):
+        """ 
+            Writes packet header and packet data to .pcap file.
+            Additionaly writes Ethernet II frame header.
         """
-            struct pcaprec_hdr:
+        eth_hdr = struct.pack("!6s 6s H", b'\xfe\xed\xfa\xce\xbe\xef', b'\x13\x37\x33\x01\x21\x03', 0x0800)
+        raw = eth_hdr + data
+        
+        """ struct pcaprec_hdr:
                 u32 ts_sec;         /* timestamp seconds */
                 u32 ts_usec;        /* timestamp microseconds */
                 u32 incl_len;       /* number of octets of packet saved in file */
                 u32 orig_len;       /* actual length of packet */
         """
-        pcaprec_hdr = struct.pack("4I", int(time.time()), 0, len(data), len(data))
-        self.file.write(pcaprec_hdr)
-
-    def close(self):
-        self.file.close()
+        pcaprec_hdr = struct.pack("!4I", int(time.time()), 0, len(raw), len(raw))
+        with open(self.filename, 'ab') as file:
+            file.write(pcaprec_hdr + raw)
 
 class IPv4:
     def __init__(self, header):
@@ -101,18 +106,23 @@ class UDP:
             self.src_port, self.dst_port, self.length, self.checksum)
 
 class Sniffer:
-    def __init__(self):
+    def __init__(self, filename):
         self.sock = None
-        
+        self.pcap = PcapFile(filename)
+        self.count = 0
+
     def setup(self):    
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
         self.sock.bind(HOST)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
+        self.pcap.write_header()
 
-    def run(self):
-        while(True):
-            self.sniff_dns()
+    def run(self, count):
+        self.count = count
+        
+        while(self.count):
+            self.count -= self.sniff_dns()
 
     def sniff_dns(self):
         packet, _ = self.sock.recvfrom(BUFFER)
@@ -145,10 +155,17 @@ class Sniffer:
             qtype = parsed.q.qtype
 
             if qtype in EXF_QTYPE or qtype in OBS_QTYPE:
+                
+                print(f'** [{self.count:04}] **' + '*' * 68)
                 print(parsed)
-                print("-" * 80)
+                print()
+
+                self.pcap.write_packet(packet)
+                return 1
+        
+        return 0
                       
 if __name__ == "__main__":
-    s = Sniffer()
+    s = Sniffer(filename="other/bad_dns.pcap")
     s.setup()
-    s.run()
+    s.run(count=50)
