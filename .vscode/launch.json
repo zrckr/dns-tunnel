@@ -18,8 +18,7 @@
             "program": "${workspaceFolder}/server.py",
             "console": "integratedTerminal",
             "args": [
-                "--zone-file", "zone.cfg",
-                // "--debug",
+                "--timeout", "10"
             ],
         },
         {
@@ -32,7 +31,7 @@
                 "--connect", "localhost:53",
                 "--send-text",
                 "--qtype", "AAAA",
-                "--timeout", "90",
+                "--timeout", "10",
                 "--scramble", "3", "11",
             ],
         },
