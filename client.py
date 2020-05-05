@@ -148,7 +148,8 @@ class Client():
         if encrypt:
             data = [encrypt(i, *args) for i in data]
 
-        if (args[0]):
+        enc_key = ""
+        if (args):
             enc_key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
             enc_key = exf.scramble(enc_key, (4, 12))
             enc_key = exf.domain_encode(enc_key, self.domain, base_enc)
@@ -158,7 +159,8 @@ class Client():
         queries = []
         for i in labels:
             d = dns.DNSRecord.question(i, self.qtype)
-            d.add_question(dns.DNSQuestion(enc_key, dns.QTYPE.TXT))
+            if (enc_key):
+                d.add_question(dns.DNSQuestion(enc_key, dns.QTYPE.TXT))
             queries += [d.pack()]
         
         return queries
