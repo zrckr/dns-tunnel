@@ -27,7 +27,6 @@ class Server():
         self.addr = (host, port)
         self.hostname = socket.gethostname()
         self.timeout = timeout
-        self.zones = []
         self.sockets = []
         self.last = {}
         self.tcps = {}
@@ -35,6 +34,7 @@ class Server():
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_sock.bind(self.addr)
+            self.tcp_sock.setblocking(True)
             self.tcp_sock.listen()
         
             udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -54,9 +54,9 @@ class Server():
 
     def run(self):
         print(f"[Info] Server is running!")
-        try:
-            while True:
-                readable, writable, exceptional = select.select(self.sockets, [], [])
+        while True:
+            try:
+                readable, writable, exceptional = select.select(self.sockets, [], self.sockets)
                 now = time.time()
                 for sock in readable:
                     if sock.type == socket.SOCK_DGRAM:
@@ -80,12 +80,16 @@ class Server():
                 for sock in exceptional:
                     self.sockets.remove(sock)
                     sock.close()
-                
-        except KeyboardInterrupt:
-            print("[Interrupt] Exit by the user...")
-        except Exception as error:
-            print("[Info]", str(error))
 
+            except ConnectionResetError:
+                continue
+            except KeyboardInterrupt:
+                print("[Interrupt] Exit by the user...")
+                break
+            except Exception as error:
+                print("[Info]", str(error))
+                break
+            
         print("[Exit] Server is shutting down!")
         for sock in self.sockets:
             sock.close()
@@ -106,7 +110,7 @@ class Server():
 
     def accept_tcp(self, sock):
         c, addr = sock.accept()
-        c.setblocking(0)
+        c.settimeout(self.timeout)
 
         print_with_time("TCP", f"{addr} connected")
         self.sockets += [c]
@@ -121,6 +125,8 @@ class Server():
             dns_len = struct.pack("!H", len(response))
             sock.send(dns_len + response)
         else:
+            print_with_time("TCP", f"{self.tcps[sock]} disconnected")
+
             sock.close()
             self.sockets.remove(sock)
             del self.tcps[sock]
@@ -130,15 +136,21 @@ class Server():
         domain = str(request.q.get_qname())
         qtype =  request.q.qtype
         
-        enc_domain = str(request.questions[1].get_qname())
-        enc_key = exf.domain_decode(enc_domain, base64.urlsafe_b64decode, exf.scramble, (4, 12), True)
-        if len(enc_key) < 3:
-            enc_key = tuple(enc_key)
-            data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.scramble, enc_key, True)
-        else:
-            enc_key = enc_key.decode()
-            data = exf.domain_decode(domain, base64.urlsafe_b64decode, exf.aes_decrypt, enc_key)
+        data = exf.domain_decode(domain, base64.urlsafe_b64decode)
         
+        if (len(request.questions) > 1):
+            enc_domain = str(request.questions[1].get_qname())
+            enc_key = exf.domain_decode(enc_domain, base64.urlsafe_b64decode)
+            enc_key = exf.scramble(enc_key, (4, 12), True)
+
+            if len(enc_key) < 3:
+                enc_key = tuple(enc_key) 
+                data = exf.scramble(data, enc_key, True)
+            else:
+                enc_key = enc_key.decode()
+                data = exf.aes_decrypt(data, enc_key)
+
+        data = exf.scramble(data, (3, 11))
         domain = domain.split('.', 1)[-1]
 
         if (qtype == dns.QTYPE.A):
@@ -156,6 +168,8 @@ class Server():
                 data = [dns.CNAME(i) for i in data]
             elif (qtype ==  dns.QTYPE.MX):
                 data = [dns.MX(i) for i in data]
+            elif (qtype == dns.QTYPE.NS):
+                data = [dns.NS(i) for i in data]
 
         reply = request.reply()
         for rd in data:
@@ -169,9 +183,6 @@ class Server():
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="DNS server script")
-
-    parser.add_argument('-z', '--zone-file', dest="config", required=True,
-                        help='Specifies zone file (describes a DNS zone)')
     
     parser.add_argument('-p', '--port', dest='port', type=int, default=53,
                         help='Specifies the port that the server will listen to')
@@ -186,6 +197,5 @@ if __name__ == "__main__":
     DEBUG = args.debug
 
     server = Server('', args.port, args.timeout)
-    server.load_config(args.config)
     server.run()
     sys.exit(0)
