@@ -15,11 +15,12 @@ from Crypto import Random
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
-SOCK_BUFFER_SIZE = 1024
-
-MAX_MSG_LEN    = 512
-MAX_DOMAIN_LEN = 255
-MAX_LABEL_LEN  = 63
+SOCK_BUFFER_SIZE    = 1024
+MAX_MSG_LEN         = 512
+MAX_DOMAIN_LEN      = 255
+MAX_LABEL_LEN       = 63
+MAX_RAW_DATA_LEN    = 140
+MAX_ENC_DATA_LEN    = 104
 
 #------------------------------------------------------------------------
 def aes_encrypt(raw, key):
@@ -72,50 +73,32 @@ def chunk(data, chunk_size) -> list:
     return [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
 
 #------------------------------------------------------------------------
-def domain_encode(data, domain, base_encoding, encrypt=None, *crypt_args) -> list:
+def domain_encode(data, domain, base_encoding):
     """ 
         Encodes data to DNS domain name (RFC 1035).
-        Returns list of DNSLabel objects with encapsulated data.
+        Returns encoded DNSLabel with encapsulated data.
     """
     labels = [i.encode('idna') for i in domain.split('.')]
 
-    if len(data) > 40:
-        data = chunk(data, 40)
-    else:
-        data = [data]
+    data = base_encoding(data)
+    chucked_data = chunk(data, 63)
 
-    if (encrypt):
-        for i in range(len(data)):
-            data[i] = encrypt(data[i], *crypt_args)
+    try:
+        result = dns.DNSLabel(chucked_data + labels)
+        return result
+    except Exception:
+        print("Original data length must be less than 141 bytes!")
+   
 
-    result = []
-    big_labels = [base_encoding(i) for i in data]
-
-    for label in big_labels:
-        result += [dns.DNSLabel([label] + labels)]
-
-    return result
-
-def domain_decode(domain, base_decoding, decrypt=None, *crypt_args) -> bytes:
+def domain_decode(domain, base_decoding) -> bytes:
     """ 
         Decodes data from DNS domain name and returns bytes.
     """
     parts = domain.split(".")
-    data = b''
+    data = ''.join(parts[:-3]).encode()
+    raw = base_decoding(data)
 
-    # Look for the presence of encoded bytes...
-    try:
-        for i in parts:
-            msg_bytes = i.encode('utf-8')
-            data += base_decoding(msg_bytes)
-    except Exception as error:
-        # Throw and go
-        pass
-
-    if (decrypt):
-        data = decrypt(data, *crypt_args)
-
-    return data
+    return raw
 
 #------------------------------------------------------------------------
 def ip_encode(data, ipv6) -> list:
@@ -155,4 +138,5 @@ def ip_decode(record) -> bytes:
         raw += socket.inet_pton(socket.AF_INET, str(record.rdata))
 
     return raw.rstrip(b'\x00')
+
 #------------------------------------------------------------------------
