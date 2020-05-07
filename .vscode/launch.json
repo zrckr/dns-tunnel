@@ -42,6 +42,8 @@
             "program": "${workspaceFolder}/sniffer.py",
             "console": "integratedTerminal",
             "args": [
+                "--gateway", "127.0.0.1",
+                "--filename", "other/bad.pcap",
             ],
         }
     ],

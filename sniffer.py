@@ -11,11 +11,14 @@ import argparse
 import dnslib as dns
 import datetime as dt
 
+DEBUG = False
+GOOD = False
+
 BUFFER = 65565
 DNS_PORT = 53
 DNS_MIN_SIZE = 64
-DNS_MAX_SIZE = 512
-DNS_SEC_MAX_SIZE = 4096
+DNS_SIZE = 128
+DNS_SEC_SIZE = 512
 DNS_RR_MAX = 10
 
 # Malicious QTYPE
@@ -172,9 +175,17 @@ class Sniffer:
                 size = ip.length + 8
                 dns_payload = packet[size:]
 
+        captured = None
         if dns_payload:
             parsed = dns.DNSRecord.parse(dns_payload)
+            domain = parsed.q.get_qname()
+            core_domain = b'.'.join(domain.label[-2:])
+            # domain_md5 = hashlib.md5(str(domain.label).encode()).hexdigest()
             checks = 0
+
+            # Check for big dns messages
+            if len(packet) > DNS_SIZE:
+                checks += 1
 
             # Checking the rcode flag
             if parsed.header.rcode not in ONLY_RCODE:
@@ -188,23 +199,10 @@ class Sniffer:
                 checks += 1
 
             # Check if domain name contains base64 or base32 string
-            odd_domain = str(parsed.q.get_qname())
-            if (self.base_pattern.match(odd_domain)):
+            odd_domain = b''.join(domain.label[:-2])
+            if (self.base_pattern.match(odd_domain.decode())):
                 checks += 1
-
-            # Check if main domain name is already in dict
-            main_domain = '.'.join(odd_domain.split('.')[-3:])
-            main_domain_md5 = hashlib.md5(main_domain.encode()).hexdigest()
             
-            if main_domain not in self.domains:
-                self.domains[main_domain] = main_domain_md5
-            elif self.domains[main_domain] == main_domain_md5:
-                checks += 1
-
-            # Check for big dns messages (non-UDP)
-            if len(dns_payload) > DNS_MAX_SIZE:
-                checks += 1
-
             # Checking types of RR
             if len(parsed.rr) > DNS_RR_MAX:
                 for rr in parsed.rr:
@@ -217,10 +215,17 @@ class Sniffer:
                         break
 
             if (checks > 2):
+                captured = packet
                 self.pcap.write_packet(packet)
-                print(osi_4)
-                print(parsed)
-                print(f'** [{self.count:04}] **' + '*' * 68)
+                if (DEBUG):
+                    print(osi_4)
+                    print(parsed)
+                    print(f'** [{self.count:04}] **' + '*' * 68)
+                else:
+                    print_with_time(f"{len(packet):03}", f"Domain: {core_domain.decode()}, Src: {ip.src_addr}, Dst: {ip.dst_addr}")
+
+        if (GOOD and not captured):
+            self.pcap.write_packet(packet)
 
 # --------------------------------------------------------------------------------------------------             
 if __name__ == "__main__":
@@ -237,14 +242,18 @@ if __name__ == "__main__":
 
     parser.add_argument('-c', '--count', dest='count', type=int, default=0,
                         help='Specifies number of captured DNS messages in .pcap file.' + 
-                            'If value is 0 - will capture until user interrupt occurs.')              
+                            'If value is 0 - will capture until user interrupt occurs.')
+
+    parser.add_argument('-G', '--good', dest='good', action="store_true",
+                        help='Captures all DNS messages in gateway.')         
 
     args = parser.parse_args()
     if not (re.compile(IP_REGEX).match(args.ip)):
         print("Parser error: invalid IP gateway address!")
         sys.exit(1)
 
-    print("[Info]", f"Listening {args.ip}")
+    GOOD = args.good
+    DEBUG = args.debug
 
     s = Sniffer(filename=args.path)
     s.setup(ip=args.ip)
