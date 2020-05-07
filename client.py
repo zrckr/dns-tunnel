@@ -162,7 +162,7 @@ class Client():
                         raw += rd.rdata.data[0]
                     else:
                         raw += exf.domain_decode(str(rd.rdata.label), base64.urlsafe_b64decode)
-            result += raw
+            result += base64.b64decode(raw)
         return result
 
 # --------------------------------------------------------------------------------------------------

