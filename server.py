@@ -15,6 +15,7 @@ import textwrap
 import dnslib as dns
 import exfiltration as exf
 from datetime import datetime
+from copy import deepcopy
 
 DEBUG = None
 
@@ -101,10 +102,7 @@ class Server():
             print_with_time("UDP", f"Received {len(request)} bytes from {addr}")
 
             response = self.dns_resolve(request)
-            if (len(response) > exf.MAX_MSG_LEN):
-                sock.sendto(b'tcp', addr)
-            else:
-                sock.sendto(response, addr)
+            sock.sendto(response, addr)
         else:
             return
 
@@ -119,7 +117,7 @@ class Server():
     def process_tcp(self, sock):
         request = sock.recv(exf.SOCK_BUFFER_SIZE)
         if request:
-            print_with_time("TCP", f"Received {len(request)} bytes from {self.tcps[sock]}")
+            print_with_time("TCP", f"Receiving {len(request)} bytes from {self.tcps[sock]}")
 
             response = self.dns_resolve(request[2:])
             dns_len = struct.pack("!H", len(response))
@@ -133,10 +131,10 @@ class Server():
 
     def dns_resolve(self, query):
         request = dns.DNSRecord.parse(query)
-        domain = str(request.q.get_qname())
+        domain = request.q.get_qname()
         qtype =  request.q.qtype
         
-        data = exf.domain_decode(domain, base64.urlsafe_b64decode)
+        data = exf.domain_decode(str(domain), base64.urlsafe_b64decode)
         
         if (len(request.questions) > 1):
             enc_domain = str(request.questions[1].get_qname())
@@ -150,8 +148,8 @@ class Server():
                 enc_key = enc_key.decode()
                 data = exf.aes_decrypt(data, enc_key)
 
-        data = exf.scramble(data, (3, 11))
-        domain = domain.split('.', 1)[-1]
+        core_domain = deepcopy(domain)
+        core_domain.label = domain.label[-2:]
 
         if (qtype == dns.QTYPE.A):
             data = exf.ip_encode(data, False)
@@ -163,25 +161,23 @@ class Server():
             data = [dns.TXT(data)]
         
         else:
-            data = exf.domain_encode(data, domain, base64.urlsafe_b64encode)
+            data = exf.domain_encode(data, str(core_domain), base64.urlsafe_b64encode)
             if (qtype == dns.QTYPE.CNAME):
-                data = [dns.CNAME(i) for i in data]
+                data = [dns.CNAME(data)]
             elif (qtype ==  dns.QTYPE.MX):
-                data = [dns.MX(i) for i in data]
+                data = [dns.MX(data)]
             elif (qtype == dns.QTYPE.NS):
-                data = [dns.NS(i) for i in data]
+                data = [dns.NS(data)]
 
         reply = request.reply()
         for rd in data:
-            reply.add_answer(dns.RR(domain, rtype=qtype, rdata=rd))
+            reply.add_answer(dns.RR(str(domain), rtype=qtype, rdata=rd))
         
-        print_with_time(">>>", f"Sending back the request in size {len(reply.pack())} bytes")
-        print("---------------------------------------------------------------")
+        print_with_time("DNS", f"Sending back the request in size {len(reply.pack())} bytes")
         return reply.pack()
 
 # --------------------------------------------------------------------------------------------------
-if __name__ == "__main__":
-    
+if __name__ == "__main__":  
     parser = argparse.ArgumentParser(description="DNS server script")
     
     parser.add_argument('-p', '--port', dest='port', type=int, default=53,

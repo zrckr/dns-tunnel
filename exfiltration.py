@@ -16,24 +16,31 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
 SOCK_BUFFER_SIZE    = 1024
-MAX_MSG_LEN         = 512
+MAX_DNS_LEN         = 512
+HALF_DNS_LEN        = 255
 MAX_DOMAIN_LEN      = 255
 MAX_LABEL_LEN       = 63
 MAX_RAW_DATA_LEN    = 140
 MAX_ENC_DATA_LEN    = 104
 
 #------------------------------------------------------------------------
-def aes_encrypt(raw, key):
+def aes_encrypt(raw, key) -> bytes:
     key = hashlib.sha256(key.encode()).digest()
     iv = Random.new().read(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return iv + cipher.encrypt(pad(raw, 16))
 
-def aes_decrypt(enc, key):
+def aes_decrypt(enc, key) -> bytes:
     key = hashlib.sha256(key.encode()).digest()
     iv = enc[:16]
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return unpad(cipher.decrypt(enc[16:]), 16)
+
+def pad_bytes(data, block_size):
+    return pad(data, block_size)
+
+def unpad_bytes(data, block_size):
+    return unpad(data,block_size)
 
 #------------------------------------------------------------------------
 def scramble(data, offset, reverse=False) -> bytes:
@@ -73,7 +80,7 @@ def chunk(data, chunk_size) -> list:
     return [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
 
 #------------------------------------------------------------------------
-def domain_encode(data, domain, base_encoding):
+def domain_encode(data, domain, base_encoding) -> dns.DNSLabel:
     """ 
         Encodes data to DNS domain name (RFC 1035).
         Returns encoded DNSLabel with encapsulated data.
@@ -107,36 +114,36 @@ def ip_encode(data, ipv6) -> list:
         Returns list of RDATA objects with encapsulated data.
     """
     chunk_size = 16 if ipv6 else 4
+    data = pad_bytes(data, chunk_size)
 
     if (len(data) > chunk_size):
         data = chunk(data, chunk_size)
     else:
         data = [data]
 
-    for i in range(len(data)):
-        data[i] = data[i].ljust(chunk_size, b'\x00')
-
     if (ipv6):
-        qtype = dns.QTYPE.AAAA
         qdata = [dns.AAAA(socket.inet_ntop(socket.AF_INET6, i)) for i in data]
     else:
-        qtype = dns.QTYPE.A
         qdata = [dns.A(socket.inet_ntop(socket.AF_INET, i)) for i in data]
 
     return qdata
 
-def ip_decode(record) -> bytes:
+def ip_decode(records) -> bytes:
     """ 
-        Decodes data from AAAA or A (from IPv6 or IPv4 addresses)
+        Decodes data from AAAA or A records (from IPv6 or IPv4 addresses)
         resource record and returns bytes.
     """
     raw = b''
 
+    for record in records:
+        if (len(record.rdata.data) > 4):
+            raw += socket.inet_pton(socket.AF_INET6, str(record.rdata))
+        else:
+            raw += socket.inet_pton(socket.AF_INET, str(record.rdata))
+    
     if (len(record.rdata.data) > 4):
-        raw += socket.inet_pton(socket.AF_INET6, str(record.rdata))
+        return unpad_bytes(raw, 16)
     else:
-        raw += socket.inet_pton(socket.AF_INET, str(record.rdata))
-
-    return raw.rstrip(b'\x00')
+        return unpad_bytes(raw, 4)
 
 #------------------------------------------------------------------------
