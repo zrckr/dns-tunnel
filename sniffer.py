@@ -6,28 +6,40 @@ import sys
 import time
 import socket
 import struct
+import hashlib
+import argparse
 import dnslib as dns
+import datetime as dt
 
-HOST = ("192.168.0.74", 0)
 BUFFER = 65565
 DNS_PORT = 53
+DNS_MIN_SIZE = 64
+DNS_MAX_SIZE = 512
+DNS_SEC_MAX_SIZE = 4096
+DNS_RR_MAX = 10
 
-EXF_QTYPE = [
-    dns.QTYPE.A,
-    dns.QTYPE.AAAA, 
-    dns.QTYPE.CNAME, 
-    dns.QTYPE.TXT, 
-    dns.QTYPE.MX,
-    dns.QTYPE.NS,
-]
+# Malicious QTYPE
+EXF_QTYPE = [dns.QTYPE.A, dns.QTYPE.AAAA, dns.QTYPE.CNAME, 
+                dns.QTYPE.TXT, dns.QTYPE.MX, dns.QTYPE.NS]
 
-OBS_QTYPE = [
-    3,  # MD
-    4,  # MF
-    10, # NULL
-    11, # WKS
-]
+# Old QTYPE: MD, MF, NULL, WKS
+OBS_QTYPE = [ 3, 4, 10, 11 ]
 
+# Exclude SRV and PTR
+EXC_QTYPE = [dns.QTYPE.SRV, dns.QTYPE.PTR]
+
+# Only NOERROR and NXDOMAIN statuses
+ONLY_RCODE = [dns.RCODE.NOERROR, dns.RCODE.NXDOMAIN]
+
+# Detecting base64, base32 strings
+BASE_REGEX = '^(?:[a-zA-Z0-9+/\-_]{4})*(?:|(?:[a-zA-Z0-9+/\-_]{3}=)|(?:[a-zA-Z0-9+/\-_]{2}==)|(?:[a-zA-Z0-9+/\-_]{1}===))$'
+IP_REGEX = '^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])(\.(?!$)|$)){4}$'
+
+def print_with_time(head, message):
+    curr_time = dt.datetime.now().strftime("%H:%M:%S.%f")
+    print(f"[{head}] [{curr_time[:-3]}]", message)
+
+# --------------------------------------------------------------------------------------------------
 class PcapFile:
     def __init__(self, filename):
         self.filename = filename
@@ -65,6 +77,7 @@ class PcapFile:
         with open(self.filename, 'ab') as file:
             file.write(pcaprec_hdr + raw)
 
+# --------------------------------------------------------------------------------------------------
 class IPv4:
     def __init__(self, header):
         self.version = header[0] >> 4
@@ -105,28 +118,37 @@ class UDP:
         return '[UDP] src: {0}, dst: {1}, len: {2}, crc: {3}'.format(
             self.src_port, self.dst_port, self.length, self.checksum)
 
+# --------------------------------------------------------------------------------------------------
 class Sniffer:
     def __init__(self, filename):
         self.sock = None
         self.pcap = PcapFile(filename)
         self.count = 0
+        self.base_pattern = re.compile(BASE_REGEX)
+        self.domains = {}
 
-    def setup(self):    
+    def setup(self, ip):    
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
-        self.sock.bind(HOST)
+        self.sock.bind((ip, 0))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
         self.pcap.write_header()
 
     def run(self, count):
-        self.count = count
-        
-        while(self.count):
-            self.count -= self.sniff_dns()
+        if not (count):
+            count = sys.maxsize
+
+        for i in range(count):
+            try:
+                 self.sniff_dns()
+            except KeyboardInterrupt:
+                print("[Exit]", "Interrupt by the user...")
+                break
 
     def sniff_dns(self):
         packet, _ = self.sock.recvfrom(BUFFER)
-        dns_payload = None
+        osi_4 = ""
+        dns_payload = b''
 
         raw = struct.unpack("!BBHHHBBH4s4s", packet[0:20])
         ip = IPv4(raw)
@@ -135,37 +157,95 @@ class Sniffer:
         if ip.protocol == TCP.IP_PDU:
             raw = struct.unpack("!HHLLBBHHH", packet[ip.length:ip.length+20])
             tcp = TCP(raw)
-            # print(tcp)
-
+            osi_4 = str(tcp)
+            
             if (tcp.dst_port == DNS_PORT or tcp.src_port == DNS_PORT):             
-                size = ip.length + tcp.length * 4
+                size = ip.length + tcp.length * 4 + 2
                 dns_payload = packet[size:]
 
         if ip.protocol == UDP.IP_PDU:
             raw = struct.unpack("!HHHH", packet[ip.length:ip.length+8])
             udp = UDP(raw)
-            # print(udp)
-
+            osi_4 = str(udp)
+            
             if (udp.dst_port == DNS_PORT or udp.src_port == DNS_PORT):             
                 size = ip.length + 8
                 dns_payload = packet[size:]
 
         if dns_payload:
             parsed = dns.DNSRecord.parse(dns_payload)
+            checks = 0
+
+            # Checking the rcode flag
+            if parsed.header.rcode not in ONLY_RCODE:
+                return
+
+            # Checking the question type
             qtype = parsed.q.qtype
+            if qtype in EXC_QTYPE:
+                return
+            elif qtype in EXF_QTYPE or qtype in OBS_QTYPE:
+                checks += 1
 
-            if qtype in EXF_QTYPE or qtype in OBS_QTYPE:
+            # Check if domain name contains base64 or base32 string
+            odd_domain = str(parsed.q.get_qname())
+            if (self.base_pattern.match(odd_domain)):
+                checks += 1
+
+            # Check if main domain name is already in dict
+            main_domain = '.'.join(odd_domain.split('.')[-3:])
+            main_domain_md5 = hashlib.md5(main_domain.encode()).hexdigest()
+            
+            if main_domain not in self.domains:
+                self.domains[main_domain] = main_domain_md5
+            elif self.domains[main_domain] == main_domain_md5:
+                checks += 1
+
+            # Check for big dns messages (non-UDP)
+            if len(dns_payload) > DNS_MAX_SIZE:
+                checks += 1
+
+            # Checking types of RR
+            if len(parsed.rr) > DNS_RR_MAX:
+                for rr in parsed.rr:
+                    count = 0.0
+                    if (rr.rtype in EXF_QTYPE or rr.rtype in OBS_QTYPE):
+                        count += 1.0
                 
-                print(f'** [{self.count:04}] **' + '*' * 68)
-                print(parsed)
-                print()
+                    if (count / len(parsed.rr) > 0.66):
+                        checks += 1
+                        break
 
+            if (checks > 2):
                 self.pcap.write_packet(packet)
-                return 1
-        
-        return 0
-                      
+                print(osi_4)
+                print(parsed)
+                print(f'** [{self.count:04}] **' + '*' * 68)
+
+# --------------------------------------------------------------------------------------------------             
 if __name__ == "__main__":
-    s = Sniffer(filename="other/bad_dns.pcap")
-    s.setup()
-    s.run(count=50)
+    parser = argparse.ArgumentParser(description="Sniffer script for detecting DNS tunnel")
+    
+    parser.add_argument('-g', '--gateway', dest='ip', type=str, required=True,
+                        help='Specifies the gateway address')
+
+    parser.add_argument('-d', '--debug', dest='debug', action="store_true",
+                        help='Displays debugging information')
+
+    parser.add_argument('-f', '--filename', dest='path', type=str, default="capture.pcap", required=True,
+                        help='Specifies path for .pcap file')
+
+    parser.add_argument('-c', '--count', dest='count', type=int, default=0,
+                        help='Specifies number of captured DNS messages in .pcap file.' + 
+                            'If value is 0 - will capture until user interrupt occurs.')              
+
+    args = parser.parse_args()
+    if not (re.compile(IP_REGEX).match(args.ip)):
+        print("Parser error: invalid IP gateway address!")
+        sys.exit(1)
+
+    print("[Info]", f"Listening {args.ip}")
+
+    s = Sniffer(filename=args.path)
+    s.setup(ip=args.ip)
+    s.run(count=args.count)
