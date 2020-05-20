@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Exfiltration",
             "type": "python",
             "request": "launch",
@@ -18,7 +25,8 @@
             "program": "${workspaceFolder}/server.py",
             "console": "integratedTerminal",
             "args": [
-                "--timeout", "10"
+                "--timeout",
+                "10"
             ],
         },
         {
@@ -28,11 +36,16 @@
             "program": "${workspaceFolder}/client.py",
             "console": "integratedTerminal",
             "args": [
-                "--connect", "localhost:53",
+                "--connect",
+                "localhost:53",
                 "--send-text",
-                "--qtype", "AAAA",
-                "--timeout", "10",
-                "--scramble", "3", "11",
+                "--qtype",
+                "AAAA",
+                "--timeout",
+                "10",
+                "--scramble",
+                "3",
+                "11",
             ],
         },
         {
@@ -42,8 +55,12 @@
             "program": "${workspaceFolder}/sniffer.py",
             "console": "integratedTerminal",
             "args": [
-                "--gateway", "127.0.0.1",
-                "--filename", "other/bad.pcap",
+                "--gateway",
+                "192.168.0.41",
+                "--filename",
+                "other/bad.pcap",
+                "--minutes",
+                "10"
             ],
         }
     ],
