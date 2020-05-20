@@ -3,10 +3,10 @@
 
 import re
 import sys
+import math
 import time
 import socket
 import struct
-import hashlib
 import argparse
 import dnslib as dns
 import datetime as dt
@@ -20,6 +20,7 @@ DNS_MIN_SIZE = 64
 DNS_SIZE = 128
 DNS_SEC_SIZE = 512
 DNS_RR_MAX = 10
+DNS_USUAL_DOMAIN_SIZE = 52
 
 # Malicious QTYPE
 EXF_QTYPE = [dns.QTYPE.A, dns.QTYPE.AAAA, dns.QTYPE.CNAME, 
@@ -35,12 +36,12 @@ EXC_QTYPE = [dns.QTYPE.SRV, dns.QTYPE.PTR]
 ONLY_RCODE = [dns.RCODE.NOERROR, dns.RCODE.NXDOMAIN]
 
 # Detecting base64, base32 strings
-BASE_REGEX = '^(?:[a-zA-Z0-9+/\-_]{4})*(?:|(?:[a-zA-Z0-9+/\-_]{3}=)|(?:[a-zA-Z0-9+/\-_]{2}==)|(?:[a-zA-Z0-9+/\-_]{1}===))$'
+BASE_REGEX = '^(?:[a-zA-Z0-9+\/]{4})*(?:|(?:[a-zA-Z0-9+\/]{3}=)|(?:[a-zA-Z0-9+\/]{2}==)|(?:[a-zA-Z0-9+\/]{1}===))$'
 IP_REGEX = '^((25[0-5]|(2[0-4]|1[0-9]|[1-9]|)[0-9])(\.(?!$)|$)){4}$'
 
-def print_with_time(head, message):
+def print_with_time(message):
     curr_time = dt.datetime.now().strftime("%H:%M:%S.%f")
-    print(f"[{head}] [{curr_time[:-3]}]", message)
+    print(f"[{curr_time[:-3]}]", message)
 
 # --------------------------------------------------------------------------------------------------
 class PcapFile:
@@ -126,9 +127,9 @@ class Sniffer:
     def __init__(self, filename):
         self.sock = None
         self.pcap = PcapFile(filename)
-        self.count = 0
         self.base_pattern = re.compile(BASE_REGEX)
-        self.domains = {}
+        self.packets = {-1: 0}
+        self.count = 0
 
     def setup(self, ip):    
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
@@ -137,11 +138,9 @@ class Sniffer:
         self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
         self.pcap.write_header()
 
-    def run(self, count):
-        if not (count):
-            count = sys.maxsize
-
-        for i in range(count):
+    def run(self, minutes):
+        t_end = time.time() + 60 * minutes
+        while time.time() < t_end:
             try:
                  self.sniff_dns()
             except KeyboardInterrupt:
@@ -150,8 +149,8 @@ class Sniffer:
 
     def sniff_dns(self):
         packet, _ = self.sock.recvfrom(BUFFER)
-        osi_4 = ""
         dns_payload = b''
+        ports = 0
 
         raw = struct.unpack("!BBHHHBBH4s4s", packet[0:20])
         ip = IPv4(raw)
@@ -160,7 +159,7 @@ class Sniffer:
         if ip.protocol == TCP.IP_PDU:
             raw = struct.unpack("!HHLLBBHHH", packet[ip.length:ip.length+20])
             tcp = TCP(raw)
-            osi_4 = str(tcp)
+            ports = (tcp.src_port, tcp.dst_port)
             
             if (tcp.dst_port == DNS_PORT or tcp.src_port == DNS_PORT):             
                 size = ip.length + tcp.length * 4 + 2
@@ -169,63 +168,135 @@ class Sniffer:
         if ip.protocol == UDP.IP_PDU:
             raw = struct.unpack("!HHHH", packet[ip.length:ip.length+8])
             udp = UDP(raw)
-            osi_4 = str(udp)
+            ports = (udp.src_port, udp.dst_port)
             
             if (udp.dst_port == DNS_PORT or udp.src_port == DNS_PORT):             
                 size = ip.length + 8
                 dns_payload = packet[size:]
 
-        captured = None
         if dns_payload:
-            parsed = dns.DNSRecord.parse(dns_payload)
-            domain = parsed.q.get_qname()
-            core_domain = b'.'.join(domain.label[-2:])
-            # domain_md5 = hashlib.md5(str(domain.label).encode()).hexdigest()
-            checks = 0
+            self.count += 1
+            dns_packet = dns.DNSRecord.parse(dns_payload)
+            dns_type = dns_packet.q.qtype
 
-            # Check for big dns messages
-            if len(packet) > DNS_SIZE:
-                checks += 1
-
-            # Checking the rcode flag
-            if parsed.header.rcode not in ONLY_RCODE:
-                return
-
-            # Checking the question type
-            qtype = parsed.q.qtype
-            if qtype in EXC_QTYPE:
-                return
-            elif qtype in EXF_QTYPE or qtype in OBS_QTYPE:
-                checks += 1
-
-            # Check if domain name contains base64 or base32 string
-            odd_domain = b''.join(domain.label[:-2])
-            if (self.base_pattern.match(odd_domain.decode())):
-                checks += 1
+            if (dns_type not in self.packets):
+                self.packets[dns_type] = 0
+            else:
+                self.packets[dns_type] += 1
             
-            # Checking types of RR
-            if len(parsed.rr) > DNS_RR_MAX:
-                for rr in parsed.rr:
-                    count = 0.0
-                    if (rr.rtype in EXF_QTYPE or rr.rtype in OBS_QTYPE):
-                        count += 1.0
-                
-                    if (count / len(parsed.rr) > 0.66):
-                        checks += 1
-                        break
-
-            if (checks > 2):
-                captured = packet
-                self.pcap.write_packet(packet)
-                if (DEBUG):
-                    print(osi_4)
-                    print(parsed)
-                    print(f'** [{self.count:04}] **' + '*' * 68)
-                else:
-                    print_with_time(f"{len(packet):03}", f"Domain: {core_domain.decode()}, Src: {ip.src_addr}, Dst: {ip.dst_addr}")
-
-        if (GOOD and not captured):
+            probability, spy_domain = self.analyze_dns(dns_payload)
+            if (probability > 0.66):
+                self.packets[-1] += 1
+                print_with_time(f"[{self.count}] {spy_domain}: {ip.src_addr}:{ports[0]} > {ip.dst_addr}:{ports[1]} | {len(packet)}")
+            
             self.pcap.write_packet(packet)
+
+    def analyze_dns(self, raw):
+        record = dns.DNSRecord.parse(raw)
+        domain = record.q.get_qname()
+        root_domain = b'.'.join(domain.label[-2:]).decode()
+
+        checks = [
+            self.check_types(record),
+            self.check_fqdn(domain),
+            self.check_sizes(record, domain),
+            self.check_rr_count(record),
+            self.check_entropy(str(domain), 4.5),
+            self.check_entropy(raw, 4.7),
+            self.check_resolve(str(domain))
+        ]
+        
+        is_spy = sum(checks) / len(checks)
+        return is_spy, root_domain
+
+    def check_fqdn(self, domain) -> bool:
+        string = b''.join(domain.label[:-2])
+        r_check = self.base_pattern.findall(string.decode()) 
+
+        if (r_check and string):
+            return True
+        else:
+            return False
+
+    def check_sizes(self, record, domain) -> bool:
+        raw_again = record.pack()
+        if (len(raw_again) > DNS_SIZE):
+            if (len(str(domain)) > DNS_USUAL_DOMAIN_SIZE):
+                return True
+
+            max_size = 0.0
+            for rr in record.rr:
+                data = str(rr.rdata)
+                if (len(data) > DNS_USUAL_DOMAIN_SIZE):
+                    max_size = len(data)
+                
+            if max_size > DNS_SIZE:
+                return True
+        return False
+
+    def check_rr_count(self, record) -> bool:
+        # Checking types of RR
+        if len(record.rr) > DNS_RR_MAX:
+            count = 0.0
+            for rr in record.rr:
+                if (rr.rtype in EXF_QTYPE or rr.rtype in OBS_QTYPE):
+                    count += 1.0
+                
+            if (count / len(record.rr) > 0.66):
+                return True
+        return False
+
+    def check_types(self, record) -> bool:
+        # Checking the rcode flag
+        if record.header.rcode not in ONLY_RCODE:
+            return False
+
+        # Check SOA
+        if record.auth:
+            if record.auth[0].rtype == dns.QTYPE.SOA:
+                return False
+        
+        # Checking the question type
+        if record.q.qtype in EXC_QTYPE:
+            return False
+        elif record.q.qtype in EXF_QTYPE or record.q.qtype in OBS_QTYPE:
+            return True
+        else:
+            return False
+
+    def check_entropy(self, data, barier) -> bool:
+        new_entropy = self.__shannon__(data)
+        if (new_entropy > barier):
+            return True
+        return False
+
+    def check_resolve(self, hostname):
+        try:
+            socket.gethostbyname(hostname)
+            return False
+        except socket.error:
+            return True
+
+    def __shannon__(self, data) -> float:
+        # We determine the frequency of each byte
+        # in the dataset and if this frequency is not null we use it for the
+        # entropy calculation
+        ent = 0.0
+        freq = {}   
+        
+        for c in data:
+            if c in freq:
+                freq[c] += 1
+            else:
+                freq[c] = 1
+
+        # A byte can take 256 values from 0 to 255. Here we are looping 256 times
+        # to determine if each possible value of a byte is in the dataset
+        for key in freq.keys():
+            f = float(freq[key]) / len(data)
+            if f > 0:   # to avoid an error for log(0)
+                ent = ent + f * math.log(f, 2)
+        return -ent
 
 # --------------------------------------------------------------------------------------------------             
 if __name__ == "__main__":
@@ -240,21 +311,18 @@ if __name__ == "__main__":
     parser.add_argument('-f', '--filename', dest='path', type=str, default="capture.pcap", required=True,
                         help='Specifies path for .pcap file')
 
-    parser.add_argument('-c', '--count', dest='count', type=int, default=0,
-                        help='Specifies number of captured DNS messages in .pcap file.' + 
-                            'If value is 0 - will capture until user interrupt occurs.')
-
-    parser.add_argument('-G', '--good', dest='good', action="store_true",
-                        help='Captures all DNS messages in gateway.')         
+    parser.add_argument('-m', '--minutes', dest='minutes', type=int, default=1,
+                        help='Size of the time window in minutes for traffic analysis')
 
     args = parser.parse_args()
     if not (re.compile(IP_REGEX).match(args.ip)):
-        print("Parser error: invalid IP gateway address!")
-        sys.exit(1)
+        parser.error("Invalid IP gateway address!")
 
-    GOOD = args.good
+    if (args.minutes <= 0):
+        parser.error("Minutes must be > 0!")
+
     DEBUG = args.debug
 
     s = Sniffer(filename=args.path)
     s.setup(ip=args.ip)
-    s.run(count=args.count)
+    s.run(minutes=args.minutes)
