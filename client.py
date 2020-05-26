@@ -48,10 +48,14 @@ class Client():
                 
                 answers = []
                 for q in queries:
-                    if (self.force_tcp or self.qtype in ['A', 'AAAA']):
+                    if (self.force_tcp):
                         response = self.send_recv(socket.SOCK_STREAM, q)
                     else:
                         response = self.send_recv(socket.SOCK_DGRAM, q)
+                    
+                    if (exf.check_bit(response, 22)):
+                        response = self.send_recv(socket.SOCK_STREAM, q)
+
                     answers += [response]
                
                 new_data = self.dns_extract(answers)

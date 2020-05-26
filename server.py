@@ -100,7 +100,7 @@ class Server():
         if request:
             print_with_time("UDP", f"Received {len(request)} bytes from {addr}")
 
-            response = self.dns_resolve(request)
+            response = self.dns_resolve(request, False)
             sock.sendto(response, addr)
         else:
             return
@@ -118,7 +118,7 @@ class Server():
         if request:
             print_with_time("TCP", f"Receiving {len(request)} bytes from {self.tcps[sock]}")
 
-            response = self.dns_resolve(request[2:])
+            response = self.dns_resolve(request[2:], True)
             dns_len = struct.pack("!H", len(response))
             sock.send(dns_len + response)
         else:
@@ -128,7 +128,7 @@ class Server():
             self.sockets.remove(sock)
             del self.tcps[sock]
 
-    def dns_resolve(self, query):
+    def dns_resolve(self, query, tcp):
         request = dns.DNSRecord.parse(query)
         reply = request.reply()
         
@@ -179,8 +179,14 @@ class Server():
         for rd in data:
             reply.add_answer(dns.RR(str(domain), rtype=qtype, rdata=rd))
         
-        print_with_time("DNS", f"Sending back the request in size {len(reply.pack())} bytes")
-        return reply.pack()
+        raw_reply = reply.pack()
+        if (len(raw_reply) > exf.MAX_DNS_LEN and not tcp):
+            print_with_time("DNS", f"Response message is big! Truncate it...")
+            reply.header.set_tc(1)
+            raw_reply = reply.pack()[:exf.MAX_DNS_LEN]
+        
+        print_with_time("DNS", f"Sending back the request in size {len(raw_reply)} bytes")
+        return raw_reply
 
 # --------------------------------------------------------------------------------------------------
 if __name__ == "__main__":  

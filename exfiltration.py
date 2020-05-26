@@ -24,6 +24,11 @@ MAX_RAW_DATA_LEN    = 140
 MAX_ENC_DATA_LEN    = 104
 
 #------------------------------------------------------------------------
+def check_bit(data, index):
+    d = BitArray(data)
+    return True if d[index] else False
+
+#------------------------------------------------------------------------
 def aes_encrypt(raw, key) -> bytes:
     key = hashlib.sha256(key.encode()).digest()
     iv = Random.new().read(16)
