@@ -160,6 +160,8 @@ class Client():
             raw = b''
             if (qtype == dns.QTYPE.A or qtype == dns.QTYPE.AAAA):
                 raw = exf.ip_decode(reply.rr)
+            elif (qtype == dns.QTYPE.NULL):
+                raw = reply.rr[0].rdata.data
             else:
                 for rd in reply.rr:
                     if (qtype == dns.QTYPE.TXT):

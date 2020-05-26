@@ -167,6 +167,9 @@ class Server():
         elif (qtype ==  dns.QTYPE.TXT):
             data = [dns.TXT(data)]
         
+        elif (qtype == dns.QTYPE.NULL):
+            data = [dns.RD(data)]
+        
         else:
             data = exf.domain_encode(data, str(core_domain), base64.urlsafe_b64encode)
             if (qtype == dns.QTYPE.CNAME):
