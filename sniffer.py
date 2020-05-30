@@ -216,10 +216,11 @@ class Sniffer:
             self.pcap.write_packet(packet)
 
     def analyze_dns(self, raw):
-         """ 
+        """ 
             Analyzes DNS payload for the presence of the DNS-tunneling data.
             Returns probability of its presence in the network.
         """
+
         record = dns.DNSRecord.parse(raw)
         domain = record.q.get_qname()
         root_domain = b'.'.join(domain.label[-2:]).decode()
@@ -231,7 +232,7 @@ class Sniffer:
             self.check_rr_count(record),
             self.check_entropy(str(domain), 4.5),
             self.check_entropy(raw, 4.7),
-            self.check_resolve(str(domain))
+            # self.check_resolve(str(domain))
         ]
         
         is_spy = sum(checks) / len(checks)
@@ -349,7 +350,7 @@ class Sniffer:
 
 # --------------------------------------------------------------------------------------------------             
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sniffer script for detecting DNS tunnel")
+    parser = argparse.ArgumentParser(description="DNS-tunneling project: sniffer script for detecting the tunnel")
     
     parser.add_argument('-g', '--gateway', dest='ip', type=str, required=True,
                         help='Specifies the gateway address')
@@ -371,6 +372,8 @@ if __name__ == "__main__":
         parser.error("Minutes must be > 0!")
 
     DEBUG = args.debug
+
+    print_with_time(f"[Info] Sniffer is running for {args.minutes} minutes!")
 
     s = Sniffer(filename=args.path)
     s.setup(ip=args.ip)

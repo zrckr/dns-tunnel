@@ -65,14 +65,14 @@ class Server():
                         else:
                             self.process_tcp(sock)
 
-                closed = []
-                for sock in self.last:
-                    if sock not in self.last and now-self.last[sock] > self.timeout:
-                        sock.close()
-                        closed += [sock]
+                # closed = []
+                # for sock in self.last:
+                #     if sock not in self.last and now-self.last[sock] > self.timeout:
+                #         sock.close()
+                #         closed += [sock]
 
-                for dead in closed:
-                    del self.last[dead]
+                # for dead in closed:
+                #     del self.last[dead]
 
                 for sock in exceptional:
                     self.sockets.remove(sock)
@@ -217,7 +217,7 @@ class Server():
 
 # --------------------------------------------------------------------------------------------------
 if __name__ == "__main__":  
-    parser = argparse.ArgumentParser(description="DNS server script")
+    parser = argparse.ArgumentParser(description="DNS-tunneling project: server script")
     
     parser.add_argument('-p', '--port', dest='port', type=int, default=53,
                         help='Specifies the port that the server will listen to')
