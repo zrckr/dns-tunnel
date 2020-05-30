@@ -59,13 +59,13 @@ class Client():
                     answers += [response]
                
                 new_data = self.dns_extract(answers)
+                new_hash = hashlib.sha1(new_data).digest()
+                match = new_hash == old_hash
 
                 if (self.modes[0]):
                     print("$", new_data.decode())
                 
                 elif (self.modes[1]):
-                    new_hash = hashlib.sha1(new_data).digest()
-                    match = new_hash == old_hash
                     print("$", new_hash.hex(), match)
                 
                 elif (self.modes[2]): 
@@ -87,10 +87,17 @@ class Client():
                 break
 
     def send_recv(self, kind, data=None):
+        """
+            Sends a binary data over TCP or UDP and waits for response from server.
+            Returns server response data.
+        """
         with socket.socket(socket.AF_INET, kind) as sock:
             sock.settimeout(self.timeout)
+
+            # Check if socket is TCP
             if (kind == socket.SOCK_STREAM):
                 sock.setblocking(True)
+                # Set up length of DNS packet and slicing offset
                 dns_length, dns_slice = struct.pack("!H", len(data)), 2
             else:
                 dns_length, dns_slice = b'', 0
@@ -98,6 +105,10 @@ class Client():
             sock.connect(self.addr)
             if (data):
                 sock.send(dns_length + data)
+
+            # Get DNS response from server
+            # From TCP payload remove first 2 bytes (DNS length)
+            # For UDP leave the package intact
             response = sock.recv(exf.SOCK_BUFFER_SIZE)[dns_slice:]
         
             if not response:
@@ -125,10 +136,16 @@ class Client():
 
         return whole
 
-    def dns_ask(self, big_data, base_enc, encrypt=None, *args):
+    def dns_ask(self, big_data, base_enc, encrypt=None, *args) -> list:
+        """
+            Generates DNS responses from raw binary data using Base encoding and encryption.
+            Returns list of DNSRecord objects.
+        """
         if encrypt is exf.aes_encrypt:
+            # Prepare data for AES encryption
             data = exf.chunk(big_data, exf.MAX_ENC_DATA_LEN)
         else:
+            # Prepare data for scrambling
             data = exf.chunk(big_data, exf.MAX_RAW_DATA_LEN)
 
         if encrypt:
@@ -136,10 +153,14 @@ class Client():
 
         enc_key = ""
         if (args):
+            # Encode key as binary data...
             enc_key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
+            # ...scramble it...
             enc_key = exf.scramble(enc_key, (4, 12))
+            # ...and encode it to domain
             enc_key = exf.domain_encode(enc_key, self.domain, base_enc)
 
+        # Generate DNS labels from data 
         labels = [exf.domain_encode(i, self.domain, base_enc) for i in data]
         
         queries = []
@@ -152,6 +173,10 @@ class Client():
         return queries
 
     def dns_extract(self, answers):
+        """
+            Extracts server binary data from series of DNS responses.
+            Returns raw binary data.
+        """
         result = b''
         for answer in answers:
             reply = dns.DNSRecord.parse(answer)
@@ -175,7 +200,7 @@ class Client():
 
 if __name__ == "__main__":
     
-    parser = argparse.ArgumentParser(description="DNS Client script")
+    parser = argparse.ArgumentParser(description="DNS-tunneling project: client script")
     
     parser.add_argument('-c', '--connect', dest='conn', type=str, required=True,
                         help='Establishes a connection to the server at the specified address:port')

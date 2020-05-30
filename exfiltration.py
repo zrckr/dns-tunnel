@@ -25,17 +25,26 @@ MAX_ENC_DATA_LEN    = 104
 
 #------------------------------------------------------------------------
 def check_bit(data, index):
+    """ 
+        Checks if a bit flag is set in binary data.
+    """
     d = BitArray(data)
     return True if d[index] else False
 
 #------------------------------------------------------------------------
 def aes_encrypt(raw, key) -> bytes:
+    """ 
+        Encrypts binary data with AES and some binary key.
+    """
     key = hashlib.sha256(key.encode()).digest()
     iv = Random.new().read(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return iv + cipher.encrypt(pad(raw, 16))
 
 def aes_decrypt(enc, key) -> bytes:
+    """ 
+        Decrypts binary data with AES and some binary key.
+    """
     key = hashlib.sha256(key.encode()).digest()
     iv = enc[:16]
     cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -50,7 +59,7 @@ def unpad_bytes(data, block_size):
 #------------------------------------------------------------------------
 def scramble(data, offset, reverse=False) -> bytes:
     """ 
-        Scrambles/descrambles bytes with specified offset
+        Scrambles/descrambles bytes with specified offset.
     """
     a = BitArray(data, endian="little")
     b = BitArray(length=len(a))
@@ -77,11 +86,11 @@ def scramble(data, offset, reverse=False) -> bytes:
 
 #------------------------------------------------------------------------
 def random_bytes(n) -> bytearray:
-    """ Generates random bytearray with n-length """
+    """ Generates random bytearray with n-length. """
     return bytearray(os.urandom(n))
 
 def chunk(data, chunk_size) -> list:
-    """ Splits data into equal-sized chunks """
+    """ Splits data into equal-sized chunks. """
     return [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
 
 #------------------------------------------------------------------------

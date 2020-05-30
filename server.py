@@ -31,6 +31,7 @@ class Server():
         self.sockets = []
         self.tcps = {}
 
+        # Set up UDP and TCP sockets
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_sock.bind(self.addr)
@@ -47,15 +48,11 @@ class Server():
             print("[Socket] Initialization failed:", str(error))
             return None
 
-    def load_config(self, filename):
-        with open(filename, 'r') as file:
-            text = file.read()
-            self.zones = dns.RR.fromZone(textwrap.dedent(text))
-
     def run(self):
         print(f"[Info] Server is running!")
         while True:
             try:
+                # Single-threaded virgin implementation
                 readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
                 now = time.time()
                 for sock in readable:
@@ -68,14 +65,14 @@ class Server():
                         else:
                             self.process_tcp(sock)
 
-                # closed = []
-                # for sock in self.last:
-                #     if sock not in self.last and now-self.last[sock] > self.timeout:
-                #         sock.close()
-                #         closed += [sock]
+                closed = []
+                for sock in self.last:
+                    if sock not in self.last and now-self.last[sock] > self.timeout:
+                        sock.close()
+                        closed += [sock]
 
-                # for dead in closed:
-                #     del self.last[dead]
+                for dead in closed:
+                    del self.last[dead]
 
                 for sock in exceptional:
                     self.sockets.remove(sock)
@@ -96,6 +93,9 @@ class Server():
         return
  
     def process_udp(self, sock):
+        """ 
+            Processes UDP connections.
+        """
         request, addr = sock.recvfrom(exf.SOCK_BUFFER_SIZE)
         if request:
             print_with_time("UDP", f"Received {len(request)} bytes from {addr}")
@@ -106,6 +106,9 @@ class Server():
             return
 
     def accept_tcp(self, sock):
+        """ 
+            Accept incoming TCP connection from client for futher transmission.
+        """
         c, addr = sock.accept()
         c.settimeout(self.timeout)
 
@@ -114,12 +117,18 @@ class Server():
         self.tcps[c] = addr
         
     def process_tcp(self, sock):
+        """ 
+            Processes TCP client connection from cache.
+        """
         request = sock.recv(exf.SOCK_BUFFER_SIZE)
         if request:
             print_with_time("TCP", f"Receiving {len(request)} bytes from {self.tcps[sock]}")
 
+            # Remove first 2 bytes (DNS length) from TCP payload
             response = self.dns_resolve(request[2:], True)
+            # Add first 2 bytes of DNS length for response
             dns_len = struct.pack("!H", len(response))
+            
             sock.send(dns_len + response)
         else:
             print_with_time("TCP", f"{self.tcps[sock]} disconnected")
@@ -129,21 +138,32 @@ class Server():
             del self.tcps[sock]
 
     def dns_resolve(self, query, tcp):
+        """ 
+            Resolves DNS request from one client at the time.
+            Encodes its actual data and forms DNS response from it.
+        """
         request = dns.DNSRecord.parse(query)
         reply = request.reply()
         
+        # Get actual domain string
         domain = request.q.get_qname()
+        # Get QTYPE
         qtype =  request.q.qtype
+        # Decode data from domain string
         data = exf.domain_decode(str(domain), base64.urlsafe_b64decode)
         
+        # If encryption key is present - decode it for futher data decryption
         if (len(request.questions) > 1):
             enc_domain = str(request.questions[1].get_qname())
             enc_key = exf.domain_decode(enc_domain, base64.urlsafe_b64decode)
+            # Descramble key
             enc_key = exf.scramble(enc_key, (4, 12), True)
 
+            # Check if the key is scramble offset
             if len(enc_key) < 3:
                 enc_key = tuple(enc_key) 
                 data = exf.scramble(data, enc_key, True)
+            # Or AES decryption key
             else:
                 enc_key = enc_key.decode()
                 data = exf.aes_decrypt(data, enc_key)
@@ -153,9 +173,12 @@ class Server():
             print_with_time("***", f"Original data length {len(data)} bytes")
             print_with_time("***", f"{data[:80]}")
 
+        # Encode back extracted data with Base64
         data = base64.b64encode(data)
 
+        # Copy object data to another
         core_domain = deepcopy(domain)
+        # Get TLD domain from original object
         core_domain.label = domain.label[-2:]
 
         if (qtype == dns.QTYPE.A):
@@ -183,6 +206,7 @@ class Server():
             reply.add_answer(dns.RR(str(domain), rtype=qtype, rdata=rd))
         
         raw_reply = reply.pack()
+        # Truncate large (> 512 bytes) data for UDP payload
         if (len(raw_reply) > exf.MAX_DNS_LEN and not tcp):
             print_with_time("DNS", f"Response message is big! Truncate it...")
             reply.header.set_tc(1)
