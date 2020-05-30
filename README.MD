@@ -2,21 +2,18 @@
 A simulation model of DNS tunneling in a local network and an analyzer program for tunnel traffic.
 > **Warning**: This project is not suitable for actual DNS tunneling in the Internet!
 
----
 ## Features
 * Server with support for multiple client connections over both TCP and UDP
 * Three sending modes for client: text messages, random bytes or text file.
 * AES data encryption option for client.
 * Sniffer can save its results to a `.pcap` file for further analysis.
 
----
 ## Supported DNS RR types
 * **A**, **AAAA** for encoding in IPv4 or IPv6 addesses
 * **CNAME**, **MX**, **NS** for encoding in domain names
 * **NULL**, **TXT** for raw data
 > **Note**: According to Wikipedia, NULL RR is considered obsolete by RFC 1035!
 
----
 ## Installing dependencies
 Make sure that Python is installed since version `3.6`.
 Use pip installation and your virtual enviroment (`venv`) to install dependencies from requirements.txt 
@@ -24,7 +21,6 @@ Use pip installation and your virtual enviroment (`venv`) to install dependencie
 pip install -r requirements.txt
 ```
 
----
 ## Usage
 Client script:
 ```
