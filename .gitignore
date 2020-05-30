@@ -144,4 +144,4 @@ cython_debug/
 # Other files and folder
 **/.vscode/
 other/
-*.txt
+downloaded.txt
