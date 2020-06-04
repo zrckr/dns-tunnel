@@ -66,12 +66,12 @@ class PcapFile:
         with open(self.filename, 'wb') as file:
             file.write(pcap_hdr)
 
-    def write_packet(self, data):
+    def write_packet(self, data, eth):
         """ 
             Writes packet header and packet data to .pcap file.
             Additionaly writes Ethernet II frame header.
         """
-        eth_hdr = struct.pack("!6s 6s H", b'\xfe\xed\xfa\xce\xbe\xef', b'\x13\x37\x33\x01\x21\x03', 0x0800)
+        eth_hdr = struct.pack("!6s 6s H", eth[:6], eth[6:12], eth[12:])
         raw = eth_hdr + data
         
         """ struct pcaprec_hdr:
@@ -137,9 +137,14 @@ class Sniffer:
         self.base_pattern = re.compile(BASE_REGEX)
         self.packets = {-1: 0}
         self.count = 0
+        self.eth = b'\xfe\xed\xfa\xce\xbe\xef\x13\x37\x33\x01\x21\x03\x08\x00'
 
-    def setup(self, ip):    
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+
+    def setup(self, ip):
+        if sys.platform == 'win32':   
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+        else:
+            self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
         self.sock.bind((ip, 0))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
@@ -163,6 +168,10 @@ class Sniffer:
         packet, _ = self.sock.recvfrom(BUFFER)
         dns_payload = b''
         ports = 0
+
+        if not sys.platform == 'win32':
+            self.eth = packet[:14]
+            packet = packet[14:]
 
         # Process IPv4 header information
         raw = struct.unpack("!BBHHHBBH4s4s", packet[0:20])
@@ -213,7 +222,7 @@ class Sniffer:
                 self.packets[-1] += 1
                 print_with_time(f"[{self.count}] {spy_domain}: {ip.src_addr}:{ports[0]} > {ip.dst_addr}:{ports[1]} | {len(packet)}")
             
-            self.pcap.write_packet(packet)
+            self.pcap.write_packet(packet, self.eth)
 
     def analyze_dns(self, raw):
         """ 
