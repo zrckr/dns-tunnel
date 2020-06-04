@@ -170,8 +170,9 @@ class Server():
             # reply.add_question(request.questions[1])
 
         if DEBUG:
+            print_with_time("***", f"DNS QTYPE is {qtype}")
             print_with_time("***", f"Original data length {len(data)} bytes")
-            print_with_time("***", f"{data[:80]}")
+            print_with_time("***", f"{data[:24]}...")
 
         # Encode back extracted data with Base64
         data = base64.b64encode(data)
@@ -190,7 +191,7 @@ class Server():
         elif (qtype ==  dns.QTYPE.TXT):
             data = [dns.TXT(data)]
         
-        elif (qtype == dns.QTYPE.NULL):
+        elif (qtype == 10):
             data = [dns.RD(data)]
         
         else:
@@ -212,7 +213,7 @@ class Server():
             reply.header.set_tc(1)
             raw_reply = reply.pack()[:exf.MAX_DNS_LEN]
         
-        print_with_time("DNS", f"Sending back the request in size {len(raw_reply)} bytes")
+        print_with_time("DNS", f"Sending back the request in size {len(raw_reply)} bytes\n")
         return raw_reply
 
 # --------------------------------------------------------------------------------------------------

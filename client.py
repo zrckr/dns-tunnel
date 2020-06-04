@@ -165,7 +165,12 @@ class Client():
         
         queries = []
         for i in labels:
-            d = dns.DNSRecord.question(i, self.qtype)
+            if (self.qtype == 'NULL'):
+                d = dns.DNSRecord.question(i)
+                d.q.qtype = 10
+            else:
+                d = dns.DNSRecord.question(i, self.qtype)
+            
             if (enc_key):
                 d.add_question(dns.DNSQuestion(enc_key, dns.QTYPE.TXT))
             queries += [d.pack()]
@@ -185,7 +190,7 @@ class Client():
             raw = b''
             if (qtype == dns.QTYPE.A or qtype == dns.QTYPE.AAAA):
                 raw = exf.ip_decode(reply.rr)
-            elif (qtype == dns.QTYPE.NULL):
+            elif (qtype == 10):
                 raw = reply.rr[0].rdata.data
             else:
                 for rd in reply.rr:
