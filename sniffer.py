@@ -131,25 +131,25 @@ class UDP:
 # --------------------------------------------------------------------------------------------------
 class Sniffer:
     """ Main sniffer class """
-    def __init__(self, filename):
+    def __init__(self, filename, probability):
         self.sock = None
         self.pcap = PcapFile(filename)
         self.base_pattern = re.compile(BASE_REGEX)
         self.packets = {-1: 0}
         self.count = 0
         self.eth = b'\xfe\xed\xfa\xce\xbe\xef\x13\x37\x33\x01\x21\x03\x08\x00'
-
+        self.limit_prob = probability
 
     def setup(self, ip):
         if sys.platform == 'win32':   
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            self.sock.bind((ip, 0))
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+            self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
         else:
             self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-        self.sock.bind((ip, 0))
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
-        self.sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
         self.pcap.write_header()
-
+        
     def run(self, minutes):
         t_end = time.time() + 60 * minutes
         while time.time() < t_end:
@@ -170,7 +170,7 @@ class Sniffer:
         ports = 0
 
         if not sys.platform == 'win32':
-            self.eth = packet[:14]
+            self.eth = packet[:14]    # Get Ethernet header 
             packet = packet[14:]
 
         # Process IPv4 header information
@@ -179,7 +179,7 @@ class Sniffer:
         # print(ip)
 
         if ip.protocol == TCP.IP_PDU:
-            # Process TCP header information
+            # Process TCP header
             raw = struct.unpack("!HHLLBBHHH", packet[ip.length:ip.length+20])
             tcp = TCP(raw)
             ports = (tcp.src_port, tcp.dst_port)
@@ -190,7 +190,7 @@ class Sniffer:
                 dns_payload = packet[size:]
 
         if ip.protocol == UDP.IP_PDU:
-            # Process UDP header information
+            # Process UDP header
             raw = struct.unpack("!HHHH", packet[ip.length:ip.length+8])
             udp = UDP(raw)
             ports = (udp.src_port, udp.dst_port)
@@ -201,7 +201,7 @@ class Sniffer:
                 dns_payload = packet[size:]
 
         if dns_payload:
-            # Discard the truncated DNS message 
+            # Discard the truncated DNS message
             if (exf.check_bit(dns_payload, 22)):
                 return
 
@@ -217,8 +217,8 @@ class Sniffer:
             
             # Analyze the DNS message
             probability, spy_domain = self.analyze_dns(dns_payload)
-            if (probability > 0.66):
-                # Maybe, this sniffed message is for DNS-tunnel
+            if (probability > self.limit_prob):
+                # Maybe, this sniffed message belongs to DNS tunnel
                 self.packets[-1] += 1
                 print_with_time(f"[{self.count}] {spy_domain}: {ip.src_addr}:{ports[0]} > {ip.dst_addr}:{ports[1]} | {len(packet)}")
             
@@ -282,7 +282,6 @@ class Sniffer:
         """
             Checks count of RR in Answers Section.
         """
-        # Checking types of RR
         if len(record.rr) > DNS_RR_MAX:
             count = 0.0
             for rr in record.rr:
@@ -297,16 +296,13 @@ class Sniffer:
         """
             Checks types of requested or responded RR.
         """
-        # Checking the rcode flag
         if record.header.rcode not in ONLY_RCODE:
             return False
 
-        # Check SOA
         if record.auth:
             if record.auth[0].rtype == dns.QTYPE.SOA:
                 return False
         
-        # Checking the question type
         if record.q.qtype in EXC_QTYPE:
             return False
         elif record.q.qtype in EXF_QTYPE or record.q.qtype in OBS_QTYPE:
@@ -364,10 +360,13 @@ if __name__ == "__main__":
     parser.add_argument('-g', '--gateway', dest='ip', type=str, required=True,
                         help='Specifies the gateway address')
 
+    parser.add_argument('-p', '--limit-prob', dest='prob', type=float, default=0.5,
+                        help='Specifies the limit probability for tunnel detection')
+
     parser.add_argument('-d', '--debug', dest='debug', action="store_true",
                         help='Displays debugging information')
 
-    parser.add_argument('-f', '--filename', dest='path', type=str, default="capture.pcap", required=True,
+    parser.add_argument('-f', '--filename', dest='path', type=str, default="capture.pcap",
                         help='Specifies path for .pcap file')
 
     parser.add_argument('-m', '--minutes', dest='minutes', type=int, default=1,
@@ -379,6 +378,9 @@ if __name__ == "__main__":
 
     if (args.minutes <= 0):
         parser.error("Minutes must be > 0!")
+
+    if not (0.0 <= args.prob <= 1.0):
+        parser.error("Limit probability value must be in range from 0.0 to 1.0!")
 
     DEBUG = args.debug
 

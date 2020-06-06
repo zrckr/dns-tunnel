@@ -22,6 +22,8 @@ MAX_DOMAIN_LEN      = 255
 MAX_LABEL_LEN       = 63
 MAX_RAW_DATA_LEN    = 140
 MAX_ENC_DATA_LEN    = 104
+IPV6_LENGTH         = 16
+IPV4_LENGTH         = 4
 
 #------------------------------------------------------------------------
 def check_bit(data, index):
@@ -97,7 +99,6 @@ def chunk(data, chunk_size) -> list:
 def domain_encode(data, domain, base_encoding) -> dns.DNSLabel:
     """ 
         Encodes data to DNS domain name (RFC 1035).
-        Returns encoded DNSLabel with encapsulated data.
     """
     labels = [i.encode('idna') for i in domain.split('.')]
 
@@ -125,9 +126,8 @@ def domain_decode(domain, base_decoding) -> bytes:
 def ip_encode(data, ipv6) -> list:
     """ 
         Encodes data to AAAA or A rdata types.
-        Returns list of RDATA objects with encapsulated data.
     """
-    chunk_size = 16 if ipv6 else 4
+    chunk_size = IPV6_LENGTH if ipv6 else IPV4_LENGTH
     data = pad_bytes(data, chunk_size)
 
     if (len(data) > chunk_size):
@@ -150,14 +150,14 @@ def ip_decode(records) -> bytes:
     raw = b''
 
     for record in records:
-        if (len(record.rdata.data) > 4):
+        if (len(record.rdata.data) > IPV4_LENGTH):
             raw += socket.inet_pton(socket.AF_INET6, str(record.rdata))
         else:
             raw += socket.inet_pton(socket.AF_INET, str(record.rdata))
     
-    if (len(record.rdata.data) > 4):
-        return unpad_bytes(raw, 16)
+    if (len(record.rdata.data) > IPV4_LENGTH):
+        return unpad_bytes(raw, IPV6_LENGTH)
     else:
-        return unpad_bytes(raw, 4)
+        return unpad_bytes(raw, IPV4_LENGTH)
 
 #------------------------------------------------------------------------

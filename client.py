@@ -54,6 +54,7 @@ class Client():
                         response = self.send_recv(socket.SOCK_DGRAM, q)
                     
                     if (exf.check_bit(response, 22)):
+                        # TC flag requires for switching to TCP  
                         response = self.send_recv(socket.SOCK_STREAM, q)
 
                     answers += [response]
@@ -89,15 +90,13 @@ class Client():
     def send_recv(self, kind, data=None):
         """
             Sends a binary data over TCP or UDP and waits for response from server.
-            Returns server response data.
         """
         with socket.socket(socket.AF_INET, kind) as sock:
             sock.settimeout(self.timeout)
 
-            # Check if socket is TCP
             if (kind == socket.SOCK_STREAM):
                 sock.setblocking(True)
-                # Set up length of DNS packet and slicing offset
+                # DNS message requires additional 2 byte length for TCP 
                 dns_length, dns_slice = struct.pack("!H", len(data)), 2
             else:
                 dns_length, dns_slice = b'', 0
@@ -106,9 +105,6 @@ class Client():
             if (data):
                 sock.send(dns_length + data)
 
-            # Get DNS response from server
-            # From TCP payload remove first 2 bytes (DNS length)
-            # For UDP leave the package intact
             response = sock.recv(exf.SOCK_BUFFER_SIZE)[dns_slice:]
         
             if not response:
@@ -120,7 +116,7 @@ class Client():
         return input("> ").encode()
 
     def read_random(self):
-        size = random.choice([16, 32, 64, 128, 256, 512])
+        size = random.choice([16, 32, 64, 128])
         return exf.random_bytes(size)
 
     def read_file(self, buffer=32):
@@ -139,13 +135,10 @@ class Client():
     def dns_ask(self, big_data, base_enc, encrypt=None, *args) -> list:
         """
             Generates DNS responses from raw binary data using Base encoding and encryption.
-            Returns list of DNSRecord objects.
         """
         if encrypt is exf.aes_encrypt:
-            # Prepare data for AES encryption
             data = exf.chunk(big_data, exf.MAX_ENC_DATA_LEN)
         else:
-            # Prepare data for scrambling
             data = exf.chunk(big_data, exf.MAX_RAW_DATA_LEN)
 
         if encrypt:
@@ -153,11 +146,9 @@ class Client():
 
         enc_key = ""
         if (args):
-            # Encode key as binary data...
+            # Encode key (AES or offset) as binary data...
             enc_key = args[0].encode() if isinstance(args[0], str) else bytearray(args[0])
-            # ...scramble it...
             enc_key = exf.scramble(enc_key, (4, 12))
-            # ...and encode it to domain
             enc_key = exf.domain_encode(enc_key, self.domain, base_enc)
 
         # Generate DNS labels from data 
@@ -180,7 +171,6 @@ class Client():
     def dns_extract(self, answers):
         """
             Extracts server binary data from series of DNS responses.
-            Returns raw binary data.
         """
         result = b''
         for answer in answers:
@@ -190,7 +180,7 @@ class Client():
             raw = b''
             if (qtype == dns.QTYPE.A or qtype == dns.QTYPE.AAAA):
                 raw = exf.ip_decode(reply.rr)
-            elif (qtype == 10):
+            elif (qtype == 10):     # NULL type
                 raw = reply.rr[0].rdata.data
             else:
                 for rd in reply.rr:
@@ -202,7 +192,6 @@ class Client():
         return result
 
 # --------------------------------------------------------------------------------------------------
-
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="DNS-tunneling project: client script")
@@ -257,15 +246,6 @@ if __name__ == "__main__":
     if (args.aes_key):
         if (len(args.aes_key) < 3):
             parser.error('AES key is less than 3 characters long!')
-
-    # if (args.text):
-    #     print("[Mode]", f"Sending text")
-    # elif (args.file):
-    #     print("[Mode]", f"Sending {args.file}")
-    # elif (args.rand):
-    #     print("[Mode]", f"Sending random bytes")
-    # print('[Record Type]', f"{dns.QTYPE.get(args.qtype)}")
-    # print("[Server Address]", f"{args.conn}")
 
     addr = args.conn.split(':')
     client = Client((addr[0], int(addr[1])), args)
